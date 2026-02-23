@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamPlayer 검색</title>
+    <link rel="stylesheet" href="/static/search.css">
+</head>
+<body>
+    <!-- 상단 검색 바 -->
+    <header class="search-header">
+        <div class="search-logo">🔍 StreamPlayer 검색</div>
+        <div class="search-bar">
+            <input type="text" id="searchInput" placeholder="검색어를 입력하세요 (예: 품번, 제목, 배우명...)" autocomplete="off" autofocus>
+            <button id="btnSearch" class="btn-search">검색</button>
+        </div>
+        <div class="search-options">
+            <select id="sortSelect" class="sort-select">
+                <option value="">관련순</option>
+                <option value="published_at">최신순</option>
+                <option value="views">조회순</option>
+                <option value="likes">좋아요순</option>
+            </select>
+        </div>
+    </header>
+
+    <!-- 상태 메시지 -->
+    <div class="search-status" id="searchStatus"></div>
+
+    <!-- 검색 결과 그리드 -->
+    <main class="results-container" id="resultsContainer">
+        <div class="results-empty" id="resultsEmpty">
+            <div class="empty-icon">🎬</div>
+            <div class="empty-text">검색어를 입력하면 MissAV에서 영상을 검색합니다.</div>
+            <div class="empty-hint">품번(예: ABW-001), 제목, 배우명 등으로 검색할 수 있습니다.</div>
+        </div>
+    </main>
+
+    <!-- 페이지네이션 -->
+    <div class="pagination" id="pagination" style="display:none;">
+        <button id="btnPrevPage" class="btn-page" disabled>◀ 이전</button>
+        <span class="page-info" id="pageInfo">1페이지</span>
+        <button id="btnNextPage" class="btn-page" disabled>다음 ▶</button>
+    </div>
+
+    <!-- 관련 영상 슬라이드아웃 패널 -->
+    <div class="related-overlay" id="relatedOverlay" style="display:none;">
+        <div class="related-panel">
+            <div class="related-header">
+                <span id="relatedTitle">관련 영상</span>
+                <button class="related-close" id="relatedClose">✕</button>
+            </div>
+            <div class="related-info" id="relatedInfo"></div>
+            <div class="related-list" id="relatedList">
+                <div class="loading-spinner">로딩 중...</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/search.js"></script>
+</body>
+</html>

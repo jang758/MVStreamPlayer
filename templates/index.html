@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamPlayer</title>
+    <link rel="stylesheet" href="/static/style.css?v={{ cache_bust }}">
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body>
+    <!-- 상단 바 -->
+    <header class="top-bar">
+        <div class="logo">&#9654; StreamPlayer</div>
+        <div class="top-bar-right">
+            <button class="top-btn" id="btnSearch" title="검색 (MissAV)">🔍</button>
+            <button class="top-btn" id="btnOnTop" title="항상 위 ON/OFF">📌</button>
+            <button class="top-btn" id="btnSettings" title="설정">⚙️</button>
+            <div class="cookie-status" id="cookieStatus" title="쿠키 상태">
+                <span class="cookie-dot"></span>
+                <span class="cookie-text">쿠키 확인 중...</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="layout">
+        <!-- 좌측: 플레이어 -->
+        <section class="player-area">
+            <div class="video-container" id="videoContainer">
+                <video id="videoPlayer" tabindex="0"></video>
+                <div class="video-overlay" id="videoOverlay">
+                    <div class="overlay-text">URL을 추가하고 재생할 영상을 선택하세요</div>
+                </div>
+                <div class="skip-indicator left" id="skipLeft">&#9664;&#9664; <span></span></div>
+                <div class="skip-indicator right" id="skipRight"><span></span> &#9654;&#9654;</div>
+            </div>
+
+            <!-- 커스텀 컨트롤 바 -->
+            <div class="controls">
+                <div class="progress-container" id="progressContainer">
+                    <div class="heatmap-bar" id="heatmapBar"></div>
+                    <div class="progress-played" id="progressPlayed"></div>
+                    <div class="progress-buffered" id="progressBuffered"></div>
+                    <div class="last-position-marker" id="lastPositionMarker" title="마지막 재생 위치"></div>
+                    <div class="progress-tooltip" id="progressTooltip">0:00</div>
+                </div>
+                <div class="controls-row">
+                    <div class="controls-left">
+                        <button class="ctrl-btn" id="btnPrev" title="이전">&#9198;</button>
+                        <button class="ctrl-btn" id="btnBack10" title="뒤로 (←)">&#9194;10</button>
+                        <button class="ctrl-btn" id="btnBack5" title="짧게 뒤로 (Shift+←)">&#9194;5</button>
+                        <button class="ctrl-btn play-btn" id="btnPlay" title="재생/일시정지 (Space)">&#9654;</button>
+                        <button class="ctrl-btn" id="btnFwd5" title="짧게 앞으로 (Shift+→)">5&#9193;</button>
+                        <button class="ctrl-btn" id="btnFwd10" title="앞으로 (→)">10&#9193;</button>
+                        <button class="ctrl-btn" id="btnNext" title="다음">&#9197;</button>
+                        <div class="volume-group">
+                            <button class="ctrl-btn" id="btnMute" title="음소거 (M)">&#128266;</button>
+                            <input type="range" class="volume-slider" id="volumeSlider" min="0" max="1" step="0.05" value="1">
+                        </div>
+                        <span class="time-display" id="timeDisplay">0:00 / 0:00</span>
+                    </div>
+                    <div class="controls-right">
+                        <select class="speed-select" id="speedSelect" title="재생 속도">
+                            <option value="0.25">0.25x</option>
+                            <option value="0.5">0.5x</option>
+                            <option value="0.75">0.75x</option>
+                            <option value="1" selected>1x</option>
+                            <option value="1.25">1.25x</option>
+                            <option value="1.5">1.5x</option>
+                            <option value="2">2x</option>
+                        </select>
+                        <button class="ctrl-btn" id="btnDownload" title="다운로드">&#11015;&#65039;</button>
+                        <button class="ctrl-btn" id="btnFullscreen" title="전체 화면 (F)">&#9974;</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 단축키 안내 -->
+            <div class="shortcuts-info" id="shortcutsInfo">
+                <button class="shortcuts-toggle" id="shortcutsToggle">&#9000; 단축키</button>
+                <div class="shortcuts-panel" id="shortcutsPanel">
+                    <div class="shortcut-item"><kbd>Space</kbd> 재생/일시정지</div>
+                    <div class="shortcut-item"><kbd>←</kbd> 뒤로 건너뛰기</div>
+                    <div class="shortcut-item"><kbd>→</kbd> 앞으로 건너뛰기</div>
+                    <div class="shortcut-item"><kbd>Shift+←</kbd> 짧게 뒤로</div>
+                    <div class="shortcut-item"><kbd>Shift+→</kbd> 짧게 앞으로</div>
+                    <div class="shortcut-item"><kbd>↑</kbd> 볼륨 +5%</div>
+                    <div class="shortcut-item"><kbd>↓</kbd> 볼륨 -5%</div>
+                    <div class="shortcut-item"><kbd>M</kbd> 음소거 토글</div>
+                    <div class="shortcut-item"><kbd>F</kbd> 전체 화면</div>
+                    <div class="shortcut-item"><kbd>Shift+N</kbd> 다음 영상</div>
+                    <div class="shortcut-item"><kbd>Shift+P</kbd> 이전 영상</div>
+                    <div class="shortcut-item"><kbd>,</kbd> / <kbd>.</kbd> 프레임 이동</div>
+                </div>
+            </div>
+
+            <!-- 다운로드 목록 패널 -->
+            <div class="download-panel" id="downloadPanel" style="display:none;">
+                <div class="download-panel-header">
+                    <span>⬇️ 다운로드</span>
+                    <button class="download-panel-close" id="downloadPanelClose">✕</button>
+                </div>
+                <div class="download-list" id="downloadList"></div>
+            </div>
+        </section>
+
+        <!-- 우측: 대기열 -->
+        <aside class="queue-area">
+            <div class="queue-header">
+                <h2>대기열</h2>
+                <div class="queue-header-btns">
+                    <button class="btn-secondary" id="btnSelectMode" title="다중 선택 모드">☑</button>
+                    <button class="btn-secondary" id="btnQueueTop" title="맨 위로 스크롤">▲</button>
+                    <button class="btn-secondary" id="btnQueueBottom" title="맨 아래로 스크롤">▼</button>
+                    <button class="btn-secondary" id="btnExport" title="데이터 내보내기">📤</button>
+                    <button class="btn-secondary" id="btnImport" title="데이터 가져오기">📥</button>
+                    <button class="btn-clear" id="btnClearQueue" title="전체 삭제">&#128465; 전체 삭제</button>
+                </div>
+            </div>
+            <!-- 다중 선택 액션 바 -->
+            <div class="bulk-action-bar" id="bulkActionBar" style="display:none;">
+                <span class="bulk-count" id="bulkCount">0개 선택</span>
+                <button class="bulk-btn" id="bulkSelectAll" title="전체 선택">전체</button>
+                <button class="bulk-btn" id="bulkMoveTop" title="선택 항목을 맨 위로">▲ 맨위</button>
+                <button class="bulk-btn" id="bulkMoveBottom" title="선택 항목을 맨 아래로">▼ 맨아래</button>
+                <button class="bulk-btn" id="bulkMoveCat" title="선택 항목 카테고리 변경">📂 카테고리</button>
+                <button class="bulk-btn danger" id="bulkDelete" title="선택 항목 삭제">🗑️ 삭제</button>
+                <button class="bulk-btn" id="bulkCancel" title="선택 취소">✕</button>
+            </div>
+            <input type="file" id="importFile" accept=".json" style="display:none">
+
+            <!-- 카테고리 탭 바 -->
+            <div class="category-bar" id="categoryBar">
+                <div class="category-tabs" id="categoryTabs">
+                    <button class="cat-tab active" data-cat="__all__">전체</button>
+                    <!-- 동적으로 카테고리 탭 추가됨 -->
+                </div>
+                <button class="cat-manage-btn" id="btnCatManage" title="카테고리 관리">+</button>
+            </div>
+
+            <div class="url-input-group">
+                <input type="text" id="urlInput" placeholder="영상 URL을 입력하세요..." autocomplete="off">
+                <button class="btn-add" id="btnAdd">+ 추가</button>
+                <button class="btn-diag" id="btnDiag" title="URL 진단 (문제 해결용)">🔍</button>
+            </div>
+            <div class="add-status" id="addStatus"></div>
+            <div class="diag-result" id="diagResult" style="display:none;"></div>
+
+            <div class="queue-list" id="queueList">
+                <div class="queue-empty" id="queueEmpty">
+                    대기열이 비어있습니다.<br>
+                    URL을 추가해 주세요.
+                </div>
+            </div>
+            <!-- 영상 정보 패널 (고정 위치) -->
+            <div class="info-panel" id="infoPanel" style="display:none">
+                <div class="info-panel-header">
+                    <span class="info-panel-title" id="infoPanelTitle"></span>
+                    <button class="info-panel-close" id="infoPanelClose" title="닫기">✕</button>
+                </div>
+                <div class="info-panel-body" id="infoPanelBody"></div>
+            </div>
+        </aside>
+    </main>
+
+    <!-- 설정 모달 -->
+    <div class="modal-overlay" id="settingsOverlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>⚙️ 설정</h3>
+                <button class="modal-close" id="settingsClose">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="setting-group">
+                    <label class="setting-label">🎬 화질</label>
+                    <select id="settingQuality" class="setting-input">
+                        <option value="best">최고 화질</option>
+                        <option value="1080p">1080p</option>
+                        <option value="720p">720p</option>
+                        <option value="480p">480p</option>
+                        <option value="360p">360p</option>
+                        <option value="worst">최저 화질</option>
+                    </select>
+                    <div class="setting-hint" id="variantsInfo"></div>
+                </div>
+                <div class="setting-group">
+                    <label class="setting-label">📂 다운로드 폴더</label>
+                    <input type="text" id="settingDownloadFolder" class="setting-input" placeholder="비우면 기본 폴더 (downloads/)">
+                    <div class="setting-hint">전체 경로 입력 (예: D:\Videos)</div>
+                </div>
+                <div class="setting-group">
+                    <label class="setting-label">⏩ 건너뛰기 (초)</label>
+                    <div class="setting-row">
+                        <div class="setting-pair">
+                            <span>←/→</span>
+                            <input type="number" id="settingSkipForward" class="setting-input-sm" min="1" max="120" value="10">
+                        </div>
+                        <div class="setting-pair">
+                            <span>Shift+←/→</span>
+                            <input type="number" id="settingSkipShift" class="setting-input-sm" min="1" max="120" value="5">
+                        </div>
+                    </div>
+                </div>
+                <div class="setting-group">
+                    <label class="setting-label">🔊 기본 볼륨</label>
+                    <div class="setting-row">
+                        <input type="range" id="settingVolume" class="setting-range" min="0" max="100" value="100">
+                        <span id="settingVolumeLabel">100%</span>
+                    </div>
+                </div>
+                <div class="setting-group">
+                    <label class="setting-label">▶️ 기본 재생 속도</label>
+                    <select id="settingSpeed" class="setting-input">
+                        <option value="0.5">0.5x</option>
+                        <option value="0.75">0.75x</option>
+                        <option value="1" selected>1x</option>
+                        <option value="1.25">1.25x</option>
+                        <option value="1.5">1.5x</option>
+                        <option value="2">2x</option>
+                    </select>
+                </div>
+                <div class="setting-group">
+                    <label class="setting-label">🔄 다음 영상 자동 재생</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="settingAutoplay" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="setting-group">
+                    <label class="setting-label">📌 항상 위 (데스크탑 앱)</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="settingOnTop">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-save" id="settingsSave">💾 저장</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 카테고리 관리 모달 -->
+    <div class="modal-overlay" id="catModalOverlay">
+        <div class="modal cat-modal">
+            <div class="modal-header">
+                <h3>📂 카테고리 관리</h3>
+                <button class="modal-close" id="catModalClose">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="cat-add-row">
+                    <input type="text" id="catNewName" class="setting-input" placeholder="새 카테고리 이름" maxlength="30">
+                    <input type="color" id="catNewColor" value="#4a9eff" class="cat-color-picker">
+                    <button class="btn-add cat-add-btn" id="btnCatAdd">+ 추가</button>
+                </div>
+                <div class="cat-list" id="catManageList">
+                    <!-- 동적으로 카테고리 목록 렌더링 -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 카테고리 지정 드롭다운 (동적 위치) -->
+    <div class="cat-dropdown" id="catDropdown" style="display:none;">
+        <div class="cat-dropdown-list" id="catDropdownList"></div>
+    </div>
+
+    <script src="/static/app.js?v={{ cache_bust }}"></script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+# 개인 정보 / 쿠키
+cookies.txt
+
+# 개인 대기열 및 재생 기록
+data.json
+data.json.bak
+data.json.bak2
+*.json.bak*
+
+# 다운로드 파일
+downloads/
+
+# Python 캐시
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 가상환경
+venv/
+.venv/
+
+# 내부 문서 (개발용)
+HANDOVER.md
+lastchat.md
+
+# 환경 변수
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
