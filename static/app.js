@@ -256,6 +256,7 @@
             el.innerHTML = `
                 ${checkboxHtml}
                 <div class="drag-handle" title="드래그하여 순서 변경">⠿</div>
+                ${moveHtml}
                 <div class="thumb" style="position:relative">
                     ${item.thumbnail ? `<img src="${item.thumbnail}" alt="" loading="lazy" onerror="this.style.display='none'">` : ''}
                     ${downloadedIds.has(item.id) ? '<span class="dl-badge">✅</span>' : ''}
@@ -265,7 +266,6 @@
                     <div class="title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</div>
                     <div class="meta">${item.duration ? formatTime(item.duration) : ''}${catBtnHtml ? ' · ' + catBtnHtml : ''}</div>
                 </div>
-                ${moveHtml}
                 <button class="delete-btn" data-id="${item.id}" title="삭제">✕</button>
             `;
             // 싱글 클릭/더블 클릭 구분 (타이머)
