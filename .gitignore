@@ -5,6 +5,7 @@ cookies.txt
 data.json
 data.json.bak
 data.json.bak2
+data.json.safety
 *.json.bak*
 
 # 다운로드 파일

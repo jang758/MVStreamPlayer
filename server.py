@@ -896,10 +896,38 @@ def _load_data():
 
 def _save_data(data):
     """data.json을 저장합니다. 저장 전 이중 백업을 수행합니다.
-    백업 순환: data.json.bak → data.json.bak2, data.json → data.json.bak"""
+    백업 순환: data.json.bak → data.json.bak2, data.json → data.json.bak
+    ★ 데이터 급감 감지 시 .safety 백업 생성 (덮어쓰기 방지)"""
     with _data_lock:
         bak = Path(str(DATA_FILE) + ".bak")
         bak2 = Path(str(DATA_FILE) + ".bak2")
+        safety = Path(str(DATA_FILE) + ".safety")
+
+        # ★ 데이터 급감 보호: 기존 대비 대기열이 50% 이상 줄었으면 .safety 백업
+        if DATA_FILE.exists():
+            try:
+                with open(DATA_FILE, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+                old_count = len(existing.get("queue", []))
+                new_count = len(data.get("queue", []))
+                if old_count > 10 and new_count < old_count * 0.5:
+                    # .safety가 없거나 .safety보다 기존 data가 더 크면 백업
+                    save_safety = True
+                    if safety.exists():
+                        try:
+                            with open(safety, "r", encoding="utf-8") as sf:
+                                safety_data = json.load(sf)
+                            if len(safety_data.get("queue", [])) >= old_count:
+                                save_safety = False  # 이미 더 큰 safety 백업 있음
+                        except:
+                            pass
+                    if save_safety:
+                        import shutil
+                        shutil.copy2(str(DATA_FILE), str(safety))
+                        print(f"  [⚠ 안전백업] 대기열 급감 감지! ({old_count}→{new_count}) .safety 백업 생성")
+            except:
+                pass
+
         try:
             # 백업 순환: .bak → .bak2
             if bak.exists():
