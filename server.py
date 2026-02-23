@@ -2507,6 +2507,15 @@ def download_file(uid):
         return send_file(filepath, as_attachment=True)
     return "파일을 찾을 수 없습니다.", 404
 
+@app.route("/api/download/clear-done", methods=["POST"])
+def clear_done_downloads():
+    """완료/실패 다운로드 상태 정리"""
+    to_remove = [uid for uid, s in _download_status.items()
+                 if s.get("status") in ("done", "error")]
+    for uid in to_remove:
+        del _download_status[uid]
+    return jsonify({"cleared": len(to_remove)})
+
 # ──────────────────────────────────────────────
 # API - 쿠키 상태
 # ──────────────────────────────────────────────

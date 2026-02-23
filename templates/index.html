@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="ko">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,6 +8,7 @@
     <link rel="stylesheet" href="/static/style.css?v={{ cache_bust }}">
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 </head>
+
 <body>
     <!-- 상단 바 -->
     <header class="top-bar">
@@ -54,7 +56,8 @@
                         <button class="ctrl-btn" id="btnNext" title="다음">&#9197;</button>
                         <div class="volume-group">
                             <button class="ctrl-btn" id="btnMute" title="음소거 (M)">&#128266;</button>
-                            <input type="range" class="volume-slider" id="volumeSlider" min="0" max="1" step="0.05" value="1">
+                            <input type="range" class="volume-slider" id="volumeSlider" min="0" max="1" step="0.05"
+                                value="1">
                         </div>
                         <span class="time-display" id="timeDisplay">0:00 / 0:00</span>
                     </div>
@@ -96,8 +99,11 @@
             <!-- 다운로드 목록 패널 -->
             <div class="download-panel" id="downloadPanel" style="display:none;">
                 <div class="download-panel-header">
-                    <span>⬇️ 다운로드</span>
-                    <button class="download-panel-close" id="downloadPanelClose">✕</button>
+                    <span>⬇️ 다운로드 <span class="dl-counter" id="dlCounter"></span></span>
+                    <div class="download-panel-actions">
+                        <button class="dl-clear-done" id="dlClearDone" title="완료 항목 지우기">🗑 완료 지우기</button>
+                        <button class="download-panel-close" id="downloadPanelClose">✕</button>
+                    </div>
                 </div>
                 <div class="download-list" id="downloadList"></div>
             </div>
@@ -184,7 +190,8 @@
                 </div>
                 <div class="setting-group">
                     <label class="setting-label">📂 다운로드 폴더</label>
-                    <input type="text" id="settingDownloadFolder" class="setting-input" placeholder="비우면 기본 폴더 (downloads/)">
+                    <input type="text" id="settingDownloadFolder" class="setting-input"
+                        placeholder="비우면 기본 폴더 (downloads/)">
                     <div class="setting-hint">전체 경로 입력 (예: D:\Videos)</div>
                 </div>
                 <div class="setting-group">
@@ -192,11 +199,13 @@
                     <div class="setting-row">
                         <div class="setting-pair">
                             <span>←/→</span>
-                            <input type="number" id="settingSkipForward" class="setting-input-sm" min="1" max="120" value="10">
+                            <input type="number" id="settingSkipForward" class="setting-input-sm" min="1" max="120"
+                                value="10">
                         </div>
                         <div class="setting-pair">
                             <span>Shift+←/→</span>
-                            <input type="number" id="settingSkipShift" class="setting-input-sm" min="1" max="120" value="5">
+                            <input type="number" id="settingSkipShift" class="setting-input-sm" min="1" max="120"
+                                value="5">
                         </div>
                     </div>
                 </div>
@@ -224,6 +233,13 @@
                         <input type="checkbox" id="settingAutoplay" checked>
                         <span class="toggle-slider"></span>
                     </label>
+                </div>
+                <div class="setting-group">
+                    <label class="setting-label">⬇️ 동시 다운로드 수</label>
+                    <div class="setting-row">
+                        <input type="range" id="settingMaxDL" class="setting-range" min="1" max="5" value="2">
+                        <span id="settingMaxDLLabel">2개</span>
+                    </div>
                 </div>
                 <div class="setting-group">
                     <label class="setting-label">📌 항상 위 (데스크탑 앱)</label>
@@ -264,6 +280,16 @@
         <div class="cat-dropdown-list" id="catDropdownList"></div>
     </div>
 
+    <!-- 우클릭 컨텍스트 메뉴 -->
+    <div class="ctx-menu" id="ctxMenu" style="display:none;">
+        <div class="ctx-item" data-action="play">▶ 재생</div>
+        <div class="ctx-item" data-action="download">⬇️ 다운로드</div>
+        <div class="ctx-item" data-action="openSite">🌐 사이트 방문</div>
+        <div class="ctx-sep"></div>
+        <div class="ctx-item ctx-danger" data-action="delete">🗑 삭제</div>
+    </div>
+
     <script src="/static/app.js?v={{ cache_bust }}"></script>
 </body>
+
 </html>

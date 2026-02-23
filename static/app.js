@@ -79,6 +79,10 @@
     const bulkMoveCat = $('#bulkMoveCat');
     const bulkDelete = $('#bulkDelete');
     const bulkCancel = $('#bulkCancel');
+    const ctxMenu = $('#ctxMenu');
+    const dlCounter = $('#dlCounter');
+    const dlClearDone = $('#dlClearDone');
+    const settingMaxDL = $('#settingMaxDL');
 
     // ── 상태 ──
     let queue = [];
@@ -114,6 +118,7 @@
         alwaysOnTop: false,
         windowWidth: 1400,
         windowHeight: 850,
+        maxConcurrentDownloads: 2,
     };
 
     // ── 유틸 ──
@@ -366,7 +371,7 @@
                 api('/api/queue/reorder', {
                     method: 'POST',
                     body: JSON.stringify({ ids }),
-                }).catch(() => {});
+                }).catch(() => { });
             });
 
             queueList.appendChild(el);
@@ -616,7 +621,7 @@
             hlsInstance.loadSource(streamUrl);
             hlsInstance.attachMedia(video);
             hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
-                video.play().catch(() => {});
+                video.play().catch(() => { });
             });
             hlsInstance.on(Hls.Events.ERROR, (event, data) => {
                 if (data.fatal) {
@@ -625,7 +630,7 @@
                     hlsInstance.destroy();
                     hlsInstance = null;
                     video.src = streamUrl;
-                    video.play().catch(() => {});
+                    video.play().catch(() => { });
                 }
             });
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -883,7 +888,7 @@
         }
         clickTimer = setTimeout(() => {
             clickTimer = null;
-            if (video.paused) video.play().catch(() => {});
+            if (video.paused) video.play().catch(() => { });
             else video.pause();
         }, 200);
     });
@@ -924,7 +929,7 @@
             api('/api/settings', {
                 method: 'PUT',
                 body: JSON.stringify(settings),
-            }).catch(() => {});
+            }).catch(() => { });
         }, 500);
     });
 
@@ -1024,6 +1029,17 @@
         const done = entries.filter(([, s]) => s.status === 'done');
         const errors = entries.filter(([, s]) => s.status === 'error');
 
+        // 카운터 업데이트
+        if (dlCounter) {
+            if (active.length > 0) {
+                dlCounter.textContent = `(${active.length}개 진행중)`;
+            } else if (done.length > 0 || errors.length > 0) {
+                dlCounter.textContent = `(완료 ${done.length} / 실패 ${errors.length})`;
+            } else {
+                dlCounter.textContent = '';
+            }
+        }
+
         if (active.length === 0 && Object.keys(downloadPolls).length === 0) {
             if (done.length > 0 || errors.length > 0) {
                 downloadList.innerHTML = entries.map(([id, s]) => _renderDlItem(id, s)).join('');
@@ -1092,6 +1108,102 @@
         downloadPanel.style.display = 'none';
     });
 
+    // 완료 항목 지우기
+    if (dlClearDone) {
+        dlClearDone.addEventListener('click', async () => {
+            try {
+                await api('/api/download/clear-done', { method: 'POST' });
+                const allStatus = await api('/api/download/all-status');
+                renderDownloadList(allStatus);
+            } catch { /* ignore */ }
+        });
+    }
+
+    // ── 우클릭 컨텍스트 메뉴 ──
+    let ctxTargetItem = null;
+
+    if (queueList && ctxMenu) {
+        queueList.addEventListener('contextmenu', (e) => {
+            const qItem = e.target.closest('.queue-item');
+            if (!qItem) return;
+            e.preventDefault();
+
+            const idx = parseInt(qItem.dataset.index);
+            ctxTargetItem = queue[idx];
+            if (!ctxTargetItem) return;
+
+            ctxMenu.style.display = 'block';
+            // 위치 결정 (화면 밖으로 넘어가지 않게)
+            let x = e.clientX, y = e.clientY;
+            const mw = ctxMenu.offsetWidth, mh = ctxMenu.offsetHeight;
+            if (x + mw > window.innerWidth) x = window.innerWidth - mw - 4;
+            if (y + mh > window.innerHeight) y = window.innerHeight - mh - 4;
+            ctxMenu.style.left = x + 'px';
+            ctxMenu.style.top = y + 'px';
+        });
+
+        // 메뉴 항목 클릭
+        ctxMenu.addEventListener('click', async (e) => {
+            const action = e.target.dataset.action;
+            if (!action || !ctxTargetItem) return;
+            ctxMenu.style.display = 'none';
+
+            const item = ctxTargetItem;
+            ctxTargetItem = null;
+
+            switch (action) {
+                case 'play': {
+                    const idx = queue.findIndex(q => q.id === item.id);
+                    if (idx >= 0) playItem(idx);
+                    break;
+                }
+                case 'download': {
+                    try {
+                        const result = await api('/api/download', {
+                            method: 'POST',
+                            body: JSON.stringify({ url: item.url }),
+                        });
+                        if (result.error) {
+                            showStatus(`❌ ${result.error}`, 'error');
+                        } else {
+                            showStatus(`⬇️ 다운로드: ${result.title || ''}`, 'success');
+                            startDownloadPolling(result.id);
+                        }
+                        setTimeout(() => showStatus(''), 3000);
+                    } catch (err) {
+                        showStatus(`❌ ${err.message}`, 'error');
+                    }
+                    break;
+                }
+                case 'openSite': {
+                    try {
+                        const res = await api('/api/open-search', {
+                            method: 'POST',
+                            body: JSON.stringify({ url: item.url }),
+                        });
+                        if (!res.ok) window.open(item.url, '_blank');
+                    } catch {
+                        window.open(item.url, '_blank');
+                    }
+                    break;
+                }
+                case 'delete': {
+                    if (confirm(`"${item.title}" 삭제?`)) {
+                        deleteItem(item.id);
+                    }
+                    break;
+                }
+            }
+        });
+
+        // 메뉴 바깥 클릭 시 닫기
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.ctx-menu')) {
+                ctxMenu.style.display = 'none';
+            }
+        });
+    }
+
     // ── 스킵 ──
     function skip(seconds) {
         if (!video.duration) return;
@@ -1137,7 +1249,7 @@
                 clearTimeout(volumeSlider._saveTimeout);
                 volumeSlider._saveTimeout = setTimeout(() => {
                     settings.defaultVolume = video.volume;
-                    api('/api/settings', { method: 'PUT', body: JSON.stringify(settings) }).catch(() => {});
+                    api('/api/settings', { method: 'PUT', body: JSON.stringify(settings) }).catch(() => { });
                 }, 1000);
                 break;
             case 'ArrowDown':
@@ -1148,7 +1260,7 @@
                 clearTimeout(volumeSlider._saveTimeout);
                 volumeSlider._saveTimeout = setTimeout(() => {
                     settings.defaultVolume = video.volume;
-                    api('/api/settings', { method: 'PUT', body: JSON.stringify(settings) }).catch(() => {});
+                    api('/api/settings', { method: 'PUT', body: JSON.stringify(settings) }).catch(() => { });
                 }, 1000);
                 break;
             case 'm':
@@ -1363,12 +1475,17 @@
         $('#settingSpeed').value = String(settings.defaultSpeed || 1.0);
         $('#settingAutoplay').checked = settings.autoplayNext !== false;
         $('#settingOnTop').checked = settings.alwaysOnTop || false;
+        if (settingMaxDL) {
+            settingMaxDL.value = settings.maxConcurrentDownloads || 2;
+            const lbl = $('#settingMaxDLLabel');
+            if (lbl) lbl.textContent = (settings.maxConcurrentDownloads || 2) + '개';
+        }
 
         // 현재 영상의 화질 variant 정보 표시
         const vi = $('#variantsInfo');
         if (currentItem && currentItem.variants && currentItem.variants.length > 0) {
             vi.textContent = '사용 가능: ' + currentItem.variants.map(v =>
-                v.resolution || `${Math.round(v.bandwidth/1000)}kbps`
+                v.resolution || `${Math.round(v.bandwidth / 1000)}kbps`
             ).join(', ');
         } else {
             vi.textContent = '';
@@ -1393,6 +1510,13 @@
         });
     }
 
+    if (settingMaxDL) {
+        settingMaxDL.addEventListener('input', () => {
+            const lbl = $('#settingMaxDLLabel');
+            if (lbl) lbl.textContent = settingMaxDL.value + '개';
+        });
+    }
+
     // 설정 저장
     settingsSave.addEventListener('click', async () => {
         const newSettings = {
@@ -1406,6 +1530,7 @@
             defaultSpeed: parseFloat($('#settingSpeed').value) || 1.0,
             autoplayNext: $('#settingAutoplay').checked,
             alwaysOnTop: $('#settingOnTop').checked,
+            maxConcurrentDownloads: settingMaxDL ? parseInt(settingMaxDL.value) || 2 : 2,
         };
 
         try {
