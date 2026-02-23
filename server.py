@@ -956,8 +956,57 @@ def _save_data(data):
             except Exception as e2:
                 print(f"  [저장] 직접 쓰기도 실패: {e2}")
 
+        # 1차 백업: 매 저장 시 auto 폴더에 백업
+        try:
+            _tiered_backup("auto")
+        except:
+            pass
+
 def _url_id(url: str) -> str:
     return hashlib.md5(url.encode()).hexdigest()
+
+# ──────────────────────────────────────────────
+# 시간차 백업 시스템 (5단계)
+# 1차: 매 저장 시 (auto)
+# 2차: 10분마다  3차: 30분마다  4차: 1시간마다
+# 5차: 프로그램 시작 시
+# ──────────────────────────────────────────────
+BACKUP_DIR = BASE_DIR / "backups"
+_BACKUP_TIERS = {
+    "auto":    {"folder": "auto",    "file": "data_auto.json"},
+    "10min":   {"folder": "10min",   "file": "data_10min.json"},
+    "30min":   {"folder": "30min",   "file": "data_30min.json"},
+    "1hour":   {"folder": "1hour",   "file": "data_1hour.json"},
+    "startup": {"folder": "startup", "file": "data_startup.json"},
+}
+
+def _tiered_backup(tier_name):
+    """지정된 티어로 data.json을 백업합니다."""
+    if not DATA_FILE.exists():
+        return
+    tier = _BACKUP_TIERS.get(tier_name)
+    if not tier:
+        return
+    try:
+        import shutil
+        dest_dir = BACKUP_DIR / tier["folder"]
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest_file = dest_dir / tier["file"]
+        shutil.copy2(str(DATA_FILE), str(dest_file))
+    except Exception as e:
+        print(f"  [백업-{tier_name}] 실패: {e}")
+
+def _start_backup_timers():
+    """10분/30분/1시간 주기 백업 타이머를 시작합니다."""
+    def _periodic_backup(tier_name, interval_sec):
+        while True:
+            time.sleep(interval_sec)
+            _tiered_backup(tier_name)
+
+    for name, interval in [("10min", 600), ("30min", 1800), ("1hour", 3600)]:
+        t = threading.Thread(target=_periodic_backup, args=(name, interval), daemon=True)
+        t.start()
+    print("[백업] 시간차 백업 타이머 시작 (10분/30분/1시간)")
 
 # ──────────────────────────────────────────────
 # 설정 관리
@@ -1014,16 +1063,21 @@ def _ydl_opts(extract_only=True):
 
 # 추출 결과 캐시 (같은 영상 재생 시 즉시 시작)
 _extract_cache = {}  # url -> {"info": ..., "time": ...}
-_CACHE_TTL = 3600  # 1시간
+_CACHE_TTL = 21600  # 6시간
 
 # M3U8 컨텐츠 캐시 (처리된 M3U8를 메모리에 저장)
 _m3u8_content_cache = {}  # video_url -> {"content": str, "time": float}
-_M3U8_CONTENT_TTL = 1800  # 30분
+_M3U8_CONTENT_TTL = 7200  # 2시간
+
+# HLS 세그먼트 프록시용 헤더 캐시
+_segment_headers_cache = {}  # netloc -> {headers}
 
 def _fetch_and_cache_m3u8(video_url, headers):
     """
-    M3U8를 CDN에서 가져와서 처리(상대→절대 URL)하고 캐시합니다.
-    캐시된 결과가 있으면 즉시 반환합니다.
+    M3U8를 CDN에서 가져와서 처리하고 캐시합니다.
+    - 상대 URL → 절대 URL 변환
+    - 모든 세그먼트/서브 URL을 /api/ts-proxy 프록시 경로로 교체
+    - CDN 헤더(Referer 등)를 _segment_headers_cache에 저장
     """
     # 캐시 확인
     if video_url in _m3u8_content_cache:
@@ -1034,6 +1088,16 @@ def _fetch_and_cache_m3u8(video_url, headers):
     resp = requests.get(video_url, headers=headers, timeout=15)
     resp.raise_for_status()
 
+    # 세그먼트 프록시에 사용할 헤더 저장
+    parsed = urllib.parse.urlparse(video_url)
+    origin_domain = f"{parsed.scheme}://{parsed.netloc}"
+    _segment_headers_cache[parsed.netloc] = {
+        k: v for k, v in headers.items()
+        if k.lower() in ('user-agent', 'referer', 'origin', 'cookie')
+    }
+    if 'Referer' not in _segment_headers_cache[parsed.netloc] and 'referer' not in _segment_headers_cache[parsed.netloc]:
+        _segment_headers_cache[parsed.netloc]['Referer'] = origin_domain + '/'
+
     content = resp.text
     base_url = video_url.rsplit('/', 1)[0] + '/'
     lines = content.split('\n')
@@ -1041,8 +1105,20 @@ def _fetch_and_cache_m3u8(video_url, headers):
     for line in lines:
         line = line.strip()
         if line and not line.startswith('#'):
+            # 상대 URL → 절대 URL
             if not line.startswith('http'):
                 line = base_url + line
+            # 절대 URL을 프록시 경로로 교체
+            line = '/api/ts-proxy?url=' + urllib.parse.quote(line, safe='')
+        elif line.startswith('#') and 'URI="' in line:
+            # #EXT-X-KEY 등의 URI 속성도 프록시 경로로 교체
+            import re as _re
+            def _replace_uri(m):
+                uri = m.group(1)
+                if not uri.startswith('http'):
+                    uri = base_url + uri
+                return 'URI="/api/ts-proxy?url=' + urllib.parse.quote(uri, safe='') + '"'
+            line = _re.sub(r'URI="([^"]+)"', _replace_uri, line)
         fixed_lines.append(line)
 
     result = '\n'.join(fixed_lines)
@@ -2205,6 +2281,10 @@ def stream_video():
     if not url:
         return "URL required", 400
 
+    t0 = time.time()
+    print(f"\n{'='*60}")
+    print(f"[스트림 진단] 요청: {url[:80]}")
+
     try:
         # 대기열에 저장된 stream_url이 있으면 즉시 사용 (재추출 불필요)
         uid = _url_id(url)
@@ -2213,12 +2293,18 @@ def stream_video():
         stored_stream_url = queue_item.get("stream_url", "") if queue_item else ""
         stored_headers = queue_item.get("http_headers", {}) if queue_item else {}
 
+        t1 = time.time()
+        print(f"[스트림 진단] 데이터 로드: {t1-t0:.2f}초 | stored_url={'있음' if stored_stream_url else '없음'}")
+
         if stored_stream_url:
             video_url = stored_stream_url
             http_headers = stored_headers
-            print(f"[스트림] 저장된 URL 사용 (즉시): {video_url[:80]}...")
+            print(f"[스트림 진단] ✅ 저장된 URL 사용 (즉시): {video_url[:80]}...")
         else:
+            print(f"[스트림 진단] ⚠️ 저장된 URL 없음 → _extract_info 시작...")
             info = _extract_info(url)
+            t_extract = time.time()
+            print(f"[스트림 진단] ⚠️ _extract_info 완료: {t_extract-t1:.2f}초")
             video_url = info.get("url")
             if not video_url:
                 formats = info.get("formats", [])
@@ -2232,8 +2318,10 @@ def stream_video():
             if queue_item and video_url:
                 queue_item["stream_url"] = video_url
                 queue_item["http_headers"] = http_headers
+                queue_item["_extracted_at"] = time.time()
                 _save_data(data)
     except Exception as e:
+        print(f"[스트림 진단] ❌ 추출 오류: {time.time()-t0:.2f}초 | {e}")
         return f"추출 오류: {e}", 500
 
     # 헤더 구성 (Referer, Cookie 등)
@@ -2241,10 +2329,16 @@ def stream_video():
     if http_headers:
         headers.update(http_headers)
 
+    t2 = time.time()
+    print(f"[스트림 진단] URL 준비 완료: {t2-t0:.2f}초 | type={'m3u8' if '.m3u8' in video_url else 'direct'}")
+
     # HLS(m3u8) 스트림인 경우: 캐시된 M3U8 즉시 반환, 없으면 가져와서 캐시
     if '.m3u8' in video_url:
         try:
             content = _fetch_and_cache_m3u8(video_url, headers)
+            t3 = time.time()
+            print(f"[스트림 진단] ✅ M3U8 반환: {t3-t0:.2f}초 (m3u8 fetch: {t3-t2:.2f}초) | {len(content)} bytes")
+            print(f"{'='*60}")
             response_headers = {
                 'Access-Control-Allow-Origin': '*',
                 'Content-Type': 'application/vnd.apple.mpegurl',
@@ -2252,6 +2346,8 @@ def stream_video():
             }
             return Response(content, headers=response_headers)
         except Exception as e:
+            t_err = time.time()
+            print(f"[스트림 진단] ⚠️ M3U8 로드 실패: {t_err-t0:.2f}초 | {e}")
             # URL 만료 등으로 실패 → 재추출 시도
             if stored_stream_url:
                 print(f"[스트림] M3U8 로드 실패 ({e}), 재추출...")
@@ -2262,6 +2358,7 @@ def stream_video():
                         if queue_item:
                             queue_item["stream_url"] = new_url
                             queue_item["http_headers"] = info.get("http_headers", {})
+                            queue_item["_extracted_at"] = time.time()
                             _save_data(data)
                         new_headers = {'User-Agent': USER_AGENT}
                         new_headers.update(info.get("http_headers", {}))
@@ -2297,6 +2394,56 @@ def stream_video():
         )
     except Exception as e:
         return f"스트림 오류: {e}", 500
+
+
+# ──────────────────────────────────────────────
+# API - HLS 세그먼트 프록시
+# ──────────────────────────────────────────────
+@app.route("/api/ts-proxy")
+def ts_proxy():
+    """HLS 세그먼트(.ts)와 서브 m3u8를 프록시합니다.
+    올바른 CDN 헤더(Referer 등)를 주입하여 지연 없이 전송합니다."""
+    seg_url = request.args.get("url", "")
+    if not seg_url:
+        return "URL required", 400
+
+    parsed = urllib.parse.urlparse(seg_url)
+
+    headers = {'User-Agent': USER_AGENT}
+    cached_hdrs = _segment_headers_cache.get(parsed.netloc, {})
+    headers.update(cached_hdrs)
+    if 'Referer' not in headers and 'referer' not in headers:
+        headers['Referer'] = f'{parsed.scheme}://{parsed.netloc}/'
+
+    range_header = request.headers.get("Range")
+    if range_header:
+        headers["Range"] = range_header
+
+    try:
+        if '.m3u8' in seg_url:
+            content = _fetch_and_cache_m3u8(seg_url, headers)
+            return Response(content, headers={
+                'Access-Control-Allow-Origin': '*',
+                'Content-Type': 'application/vnd.apple.mpegurl',
+                'Cache-Control': 'max-age=300',
+            })
+
+        resp = requests.get(seg_url, headers=headers, stream=True, timeout=20)
+        excluded = {"content-encoding", "transfer-encoding", "connection"}
+        response_headers = {
+            k: v for k, v in resp.headers.items() if k.lower() not in excluded
+        }
+        response_headers["Access-Control-Allow-Origin"] = "*"
+        response_headers["Cache-Control"] = "max-age=3600"
+
+        return Response(
+            stream_with_context(resp.iter_content(chunk_size=1024 * 128)),
+            status=resp.status_code,
+            headers=response_headers,
+            content_type=resp.headers.get("Content-Type", "video/mp2t"),
+        )
+    except Exception as e:
+        return f"세그먼트 프록시 오류: {e}", 502
 
 # ──────────────────────────────────────────────
 # API - 영상 다운로드 (대기열 시스템, 최대 2개 동시)
@@ -2920,6 +3067,11 @@ if __name__ == "__main__":
     for m in mods:
         print(m)
     print("=" * 50)
+    # 시작 시 백업 (5차)
+    _tiered_backup("startup")
+    print("[백업] 시작 시 백업 완료 (backups/startup/)")
+    # 시간차 백업 타이머 시작
+    _start_backup_timers()
     # 백그라운드 사전 추출 스레드 시작
     threading.Thread(target=_background_preextract, daemon=True).start()
     app.run(host="127.0.0.1", port=5000, debug=True, threaded=True)

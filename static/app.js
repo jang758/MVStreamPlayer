@@ -1176,15 +1176,7 @@
                     break;
                 }
                 case 'openSite': {
-                    try {
-                        const res = await api('/api/open-search', {
-                            method: 'POST',
-                            body: JSON.stringify({ url: item.url }),
-                        });
-                        if (!res.ok) window.open(item.url, '_blank');
-                    } catch {
-                        window.open(item.url, '_blank');
-                    }
+                    window.open(item.url, '_blank');
                     break;
                 }
                 case 'delete': {
