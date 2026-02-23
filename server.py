@@ -1026,19 +1026,30 @@ def _background_preextract():
     time.sleep(3)  # 서버 시작 대기
     try:
         data = _load_data()
-        items = [item for item in data.get("queue", []) if not item.get("stream_url")]
-        if not items:
+        urls_to_extract = []
+        for item in data.get("queue", []):
+            if not item.get("stream_url"):
+                urls_to_extract.append({"url": item["url"], "title": item.get("title", "?"), "id": item["id"]})
+        if not urls_to_extract:
             print("[사전 추출] 모든 항목이 준비됨")
             return
-        print(f"[사전 추출] {len(items)}개 항목 처리 시작...")
-        for item in items:
+        print(f"[사전 추출] {len(urls_to_extract)}개 항목 처리 시작...")
+        success = 0
+        for item_ref in urls_to_extract:
             try:
-                info = _extract_info(item["url"])
+                info = _extract_info(item_ref["url"])
                 video_url = info.get("url", "")
                 if video_url:
-                    item["stream_url"] = video_url
-                    item["http_headers"] = info.get("http_headers", {})
-                    item["variants"] = info.get("_variants", [])
+                    # ★ 매번 최신 데이터를 다시 로드해서 저장 (race condition 방지)
+                    fresh_data = _load_data()
+                    for q in fresh_data.get("queue", []):
+                        if q["id"] == item_ref["id"]:
+                            q["stream_url"] = video_url
+                            q["http_headers"] = info.get("http_headers", {})
+                            q["variants"] = info.get("_variants", [])
+                            q["_extracted_at"] = time.time()
+                            break
+                    _save_data(fresh_data)
                     # M3U8 도 미리 캐시
                     headers = {'User-Agent': USER_AGENT}
                     headers.update(info.get("http_headers", {}))
@@ -1047,11 +1058,12 @@ def _background_preextract():
                             _fetch_and_cache_m3u8(video_url, headers)
                         except:
                             pass
-                    print(f"[사전 추출] ✓ {item['title'][:40]}")
+                    success += 1
+                    print(f"[사전 추출] ✓ {item_ref['title'][:40]}")
             except Exception as e:
-                print(f"[사전 추출] ✗ {item['title'][:40]}: {e}")
-        _save_data(data)
-        print(f"[사전 추출] 완료")
+                print(f"[사전 추출] ✗ {item_ref['title'][:40]}: {e}")
+            time.sleep(0.5)  # 서버 부하 방지
+        print(f"[사전 추출] 완료 ({success}/{len(urls_to_extract)} 성공)")
     except Exception as e:
         print(f"[사전 추출] 오류: {e}")
 
