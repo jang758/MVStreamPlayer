@@ -1176,7 +1176,14 @@
                     break;
                 }
                 case 'openSite': {
-                    window.open(item.url, '_blank');
+                    try {
+                        await api('/api/open-search', {
+                            method: 'POST',
+                            body: JSON.stringify({ url: item.url }),
+                        });
+                    } catch {
+                        window.open(item.url, '_blank');
+                    }
                     break;
                 }
                 case 'delete': {
