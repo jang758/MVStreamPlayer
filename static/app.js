@@ -1006,8 +1006,18 @@
             e.clientY >= rect.top && e.clientY <= rect.bottom) {
             const ratio = (e.clientX - rect.left) / rect.width;
             if (video.duration && isFinite(video.duration)) {
-                progressTooltip.textContent = formatTime(ratio * video.duration);
+                const hoverTime = ratio * video.duration;
+                // 시간 텍스트 업데이트
+                let timeLabel = progressTooltip.querySelector('.pt-time');
+                if (!timeLabel) {
+                    timeLabel = document.createElement('span');
+                    timeLabel.className = 'pt-time';
+                    progressTooltip.appendChild(timeLabel);
+                }
+                timeLabel.textContent = formatTime(hoverTime);
                 progressTooltip.style.left = (ratio * 100) + '%';
+                // 캨버스 프레임 미리보기
+                updateFramePreview(hoverTime);
             }
         }
     });
@@ -1494,6 +1504,11 @@
                 new Blob([JSON.stringify({ position: video.currentTime })], { type: 'application/json' })
             );
         }
+        // 마지막 재생 항목 + 스크롤 위치 저장
+        try {
+            localStorage.setItem('sp_last_item', currentItem ? currentItem.id : '');
+            localStorage.setItem('sp_last_scroll', queueList ? String(queueList.scrollTop) : '0');
+        } catch { /* ignore */ }
     });
 
     // ── HTML 이스케이프 ──
@@ -2199,6 +2214,53 @@
     loadSettings().then(async () => {
         checkCookies();
         await loadCategories();
-        loadQueue();
+        await loadQueue();
+
+        // 마지막 재생 항목 복원
+        try {
+            const lastItemId = localStorage.getItem('sp_last_item');
+            const lastScroll = parseInt(localStorage.getItem('sp_last_scroll') || '0');
+            if (lastItemId) {
+                const idx = queue.findIndex(q => q.id === lastItemId);
+                if (idx >= 0) {
+                    playItem(idx);
+                } else if (queueList) {
+                    queueList.scrollTop = lastScroll;
+                }
+            } else if (queueList) {
+                queueList.scrollTop = lastScroll;
+            }
+        } catch { /* ignore */ }
     });
+
+    // ── 프로그레스 바 프레임 미리보기 ──
+    const frameCanvas = document.createElement('canvas');
+    frameCanvas.width = 160;
+    frameCanvas.height = 90;
+    frameCanvas.style.cssText = 'border-radius:3px;display:block;';
+    const frameCtx = frameCanvas.getContext('2d');
+    let frameInserted = false;
+    let lastFrameTime = -1;
+
+    function updateFramePreview(time) {
+        if (!video.duration || video.duration === Infinity) return;
+        if (!video.videoWidth) return; // 아직 비디오 로드 전
+
+        // 툴팁에 캔버스 삽입
+        if (!frameInserted) {
+            progressTooltip.insertBefore(frameCanvas, progressTooltip.firstChild);
+            frameInserted = true;
+        }
+
+        // 0.5초 단위로만 업데이트 (성능)
+        const roundedTime = Math.round(time * 2) / 2;
+        if (roundedTime === lastFrameTime) return;
+        lastFrameTime = roundedTime;
+
+        // 현재 재생 중인 비디오에서 스냅샷 캡처
+        // 별도 video 엘리먼트 없이 현재 프레임 기준으로 그리기
+        try {
+            frameCtx.drawImage(video, 0, 0, frameCanvas.width, frameCanvas.height);
+        } catch { /* cross-origin or not ready */ }
+    }
 })();
