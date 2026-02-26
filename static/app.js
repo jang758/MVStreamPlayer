@@ -756,6 +756,8 @@
             hlsInstance.destroy();
             hlsInstance = null;
         }
+        // 프리뷰 스트림도 정리 (영상 변경 시)
+        if (typeof destroyPreviewStream === 'function') destroyPreviewStream();
 
         // 스트림 URL 설정 (HLS.js 지원)
         const streamUrl = `/api/stream?url=${encodeURIComponent(currentItem.url)}`;
@@ -2233,7 +2235,7 @@
         } catch { /* ignore */ }
     });
 
-    // ── 프로그레스 바 프레임 미리보기 ──
+    // ── 프로그레스 바 프레임 미리보기 (정확한 프레임) ──
     const frameCanvas = document.createElement('canvas');
     frameCanvas.width = 160;
     frameCanvas.height = 90;
@@ -2242,9 +2244,65 @@
     let frameInserted = false;
     let lastFrameTime = -1;
 
+    // 숨겨진 프리뷰 비디오 (별도 HLS 인스턴스)
+    const previewVideo = document.createElement('video');
+    previewVideo.muted = true;
+    previewVideo.preload = 'auto';
+    previewVideo.style.cssText = 'position:absolute;width:0;height:0;pointer-events:none;opacity:0;';
+    document.body.appendChild(previewVideo);
+    let previewHls = null;
+    let previewStreamUrl = null;
+    let previewSeekTimer = null;
+    let previewReady = false;
+
+    // 프리뷰 HLS 인스턴스 설정 (메인 영상 변경 시)
+    function setupPreviewStream(streamUrl) {
+        if (previewStreamUrl === streamUrl && previewHls) return;
+        destroyPreviewStream();
+        previewStreamUrl = streamUrl;
+        previewReady = false;
+
+        if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+            previewHls = new Hls({
+                maxBufferLength: 2,
+                maxMaxBufferLength: 5,
+                maxBufferSize: 5 * 1000 * 1000,
+                startLevel: 0, // 최저 화질 (빠른 로딩)
+                autoStartLoad: true,
+                enableWorker: false,
+            });
+            previewHls.loadSource(streamUrl);
+            previewHls.attachMedia(previewVideo);
+            previewHls.on(Hls.Events.MANIFEST_PARSED, () => {
+                previewReady = true;
+            });
+            previewHls.on(Hls.Events.ERROR, (event, data) => {
+                if (data.fatal) {
+                    previewReady = false;
+                    destroyPreviewStream();
+                }
+            });
+        } else if (previewVideo.canPlayType('application/vnd.apple.mpegurl')) {
+            previewVideo.src = streamUrl;
+            previewVideo.addEventListener('loadedmetadata', () => { previewReady = true; }, { once: true });
+        }
+    }
+
+    function destroyPreviewStream() {
+        if (previewHls) {
+            previewHls.destroy();
+            previewHls = null;
+        }
+        previewVideo.removeAttribute('src');
+        previewVideo.load();
+        previewStreamUrl = null;
+        previewReady = false;
+        lastFrameTime = -1;
+    }
+
     function updateFramePreview(time) {
         if (!video.duration || video.duration === Infinity) return;
-        if (!video.videoWidth) return; // 아직 비디오 로드 전
+        if (!currentItem) return;
 
         // 툴팁에 캔버스 삽입
         if (!frameInserted) {
@@ -2252,15 +2310,39 @@
             frameInserted = true;
         }
 
-        // 0.5초 단위로만 업데이트 (성능)
-        const roundedTime = Math.round(time * 2) / 2;
+        // 프리뷰 스트림 초기화 (아직 안 됐으면)
+        const streamUrl = `/api/stream?url=${encodeURIComponent(currentItem.url)}`;
+        setupPreviewStream(streamUrl);
+
+        if (!previewReady) {
+            // 로딩 중 표시
+            frameCtx.fillStyle = '#1a1a1a';
+            frameCtx.fillRect(0, 0, 160, 90);
+            frameCtx.fillStyle = '#888';
+            frameCtx.font = '11px sans-serif';
+            frameCtx.textAlign = 'center';
+            frameCtx.fillText('로딩...', 80, 50);
+            return;
+        }
+
+        // 1초 단위로만 seek (성능)
+        const roundedTime = Math.round(time);
         if (roundedTime === lastFrameTime) return;
         lastFrameTime = roundedTime;
 
-        // 현재 재생 중인 비디오에서 스냅샷 캡처
-        // 별도 video 엘리먼트 없이 현재 프레임 기준으로 그리기
-        try {
-            frameCtx.drawImage(video, 0, 0, frameCanvas.width, frameCanvas.height);
-        } catch { /* cross-origin or not ready */ }
+        // 디바운스: 300ms 후에 seek
+        clearTimeout(previewSeekTimer);
+        previewSeekTimer = setTimeout(() => {
+            previewVideo.currentTime = roundedTime;
+        }, 300);
     }
+
+    // seeked 이벤트에서 프레임 캡처
+    previewVideo.addEventListener('seeked', () => {
+        try {
+            if (previewVideo.videoWidth > 0) {
+                frameCtx.drawImage(previewVideo, 0, 0, frameCanvas.width, frameCanvas.height);
+            }
+        } catch { /* ignore */ }
+    });
 })();
