@@ -597,37 +597,144 @@
         }
     }
 
-    // ── 중복 URL 제거 ──
+    // ── 중복 URL 검토 모달 ──
     async function deduplicateQueue() {
-        const slugMap = new Map(); // slug -> 첫 번째 item
-        const dupeIds = [];
+        // 슬러그별로 그룹핑
+        const slugMap = new Map(); // slug -> [items]
         for (const item of queue) {
             const slug = extractVideoSlug(item.url);
             if (!slug) continue;
-            if (slugMap.has(slug)) {
-                dupeIds.push(item.id);
-            } else {
-                slugMap.set(slug, item);
-            }
+            if (!slugMap.has(slug)) slugMap.set(slug, []);
+            slugMap.get(slug).push(item);
         }
-        if (dupeIds.length === 0) {
+
+        // 2개 이상인 그룹만 추출
+        const dupeGroups = [...slugMap.entries()].filter(([, items]) => items.length > 1);
+
+        if (dupeGroups.length === 0) {
             showStatus('✅ 중복된 URL이 없습니다.', 'success');
             setTimeout(() => showStatus(''), 2000);
             return;
         }
-        if (!confirm(`${dupeIds.length}개의 중복 항목이 발견되었습니다. 삭제하시겠습니까?`)) return;
-        showStatus(`⏳ ${dupeIds.length}개 중복 삭제 중...`, '');
-        try {
-            await api('/api/queue/bulk-delete', {
-                method: 'POST',
-                body: JSON.stringify({ ids: dupeIds }),
+
+        // 모달 생성
+        const overlay = document.createElement('div');
+        overlay.className = 'dedupe-overlay';
+
+        let groupsHtml = '';
+        let totalDupes = 0;
+        for (const [slug, items] of dupeGroups) {
+            groupsHtml += `<div class="dedupe-group">
+                <div class="dedupe-group-header">🔁 "${slug}" — ${items.length}개</div>`;
+            items.forEach((item, i) => {
+                const isFirst = i === 0;
+                if (!isFirst) totalDupes++;
+                groupsHtml += `<div class="dedupe-item">
+                    ${isFirst
+                        ? '<span class="dedupe-item-keep">유지</span>'
+                        : `<input type="checkbox" class="dedupe-cb" data-id="${item.id}" checked>`}
+                    <img src="${item.thumbnail || ''}" alt="" onerror="this.style.display='none'">
+                    <div class="dedupe-item-info">
+                        <div class="dedupe-item-title">${escapeHtml(item.title || '제목 없음')}</div>
+                        <div class="dedupe-item-url">${escapeHtml(item.url)}</div>
+                    </div>
+                </div>`;
             });
-            showStatus(`✅ ${dupeIds.length}개 중복 삭제 완료.`, 'success');
-            await loadQueue();
-            setTimeout(() => showStatus(''), 3000);
-        } catch (e) {
-            showStatus(`❌ 삭제 오류: ${e.message}`, 'error');
+            groupsHtml += '</div>';
         }
+
+        overlay.innerHTML = `<div class="dedupe-modal">
+            <div class="dedupe-header">
+                <span>🔁 중복 검토 — ${dupeGroups.length}그룹, ${totalDupes}개 중복</span>
+                <button class="dedupe-close-btn">✕</button>
+            </div>
+            <div class="dedupe-body">${groupsHtml}</div>
+            <div class="dedupe-footer">
+                <span class="dedupe-count">선택: ${totalDupes}개 삭제 예정</span>
+                <div style="display:flex;gap:8px">
+                    <button class="dedupe-cancel">취소</button>
+                    <button class="dedupe-delete">🗑 선택 삭제</button>
+                </div>
+            </div>
+        </div>`;
+
+        document.body.appendChild(overlay);
+
+        // 이벤트
+        const countLabel = overlay.querySelector('.dedupe-count');
+        const deleteBtn = overlay.querySelector('.dedupe-delete');
+
+        function updateCount() {
+            const checked = overlay.querySelectorAll('.dedupe-cb:checked').length;
+            countLabel.textContent = `선택: ${checked}개 삭제 예정`;
+            deleteBtn.disabled = checked === 0;
+        }
+
+        overlay.querySelectorAll('.dedupe-cb').forEach(cb => {
+            cb.addEventListener('change', updateCount);
+        });
+
+        overlay.querySelector('.dedupe-close-btn').addEventListener('click', () => overlay.remove());
+        overlay.querySelector('.dedupe-cancel').addEventListener('click', () => overlay.remove());
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+        deleteBtn.addEventListener('click', async () => {
+            const ids = [...overlay.querySelectorAll('.dedupe-cb:checked')].map(cb => cb.dataset.id);
+            if (ids.length === 0) return;
+            deleteBtn.disabled = true;
+            deleteBtn.textContent = '⏳ 삭제 중...';
+            try {
+                await api('/api/queue/bulk-delete', {
+                    method: 'POST',
+                    body: JSON.stringify({ ids }),
+                });
+                overlay.remove();
+                showStatus(`✅ ${ids.length}개 중복 삭제 완료.`, 'success');
+                await loadQueue();
+                setTimeout(() => showStatus(''), 3000);
+            } catch (e) {
+                showStatus(`❌ 삭제 오류: ${e.message}`, 'error');
+                deleteBtn.textContent = '🗑 선택 삭제';
+                deleteBtn.disabled = false;
+            }
+        });
+    }
+
+    // ── 썸네일 호버 원본 크기 미리보기 ──
+    const thumbPreview = document.createElement('div');
+    thumbPreview.id = 'thumbPreview';
+    thumbPreview.innerHTML = '<img>';
+    document.body.appendChild(thumbPreview);
+    const thumbPreviewImg = thumbPreview.querySelector('img');
+
+    if (queueList) {
+        queueList.addEventListener('mouseover', (e) => {
+            const img = e.target.closest('.queue-item .thumb img');
+            if (!img) return;
+            const src = img.src;
+            if (!src) return;
+            thumbPreviewImg.src = src;
+            thumbPreview.style.display = 'block';
+        });
+
+        queueList.addEventListener('mousemove', (e) => {
+            if (thumbPreview.style.display !== 'block') return;
+            // 미리보기를 마우스 왼쪽에 표시
+            const pw = 490, ph = 370;
+            let x = e.clientX - pw - 20;
+            let y = e.clientY - ph / 2;
+            if (x < 10) x = e.clientX + 20;
+            if (y < 10) y = 10;
+            if (y + ph > window.innerHeight - 10) y = window.innerHeight - ph - 10;
+            thumbPreview.style.left = x + 'px';
+            thumbPreview.style.top = y + 'px';
+        });
+
+        queueList.addEventListener('mouseout', (e) => {
+            const img = e.target.closest('.queue-item .thumb img');
+            if (!img) return;
+            thumbPreview.style.display = 'none';
+        });
     }
 
     // ── 재생 ──
