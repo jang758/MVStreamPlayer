@@ -1731,3 +1731,39 @@ body.drag-over::after {
     color: var(--text-secondary);
     font-weight: normal;
 }
+
+/* 썸네일 호버 확대 */
+.queue-item .thumb {
+    overflow: visible;
+}
+
+.queue-item .thumb img {
+    transition: transform 0.2s ease, z-index 0s;
+    transform-origin: left center;
+    position: relative;
+}
+
+.queue-item .thumb:hover img {
+    transform: scale(2.5);
+    z-index: 1000;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.8);
+    border-radius: 4px;
+}
+
+/* 컨텍스트 메뉴 카테고리 */
+.ctx-cat-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    vertical-align: middle;
+}
+
+.ctx-item.ctx-current {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.ctx-item.ctx-current:hover {
+    background: rgba(74, 158, 255, 0.15);
+}

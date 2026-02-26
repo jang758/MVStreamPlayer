@@ -314,18 +314,22 @@
                 });
             }
 
-            // 개별 이동 버튼
+            // 개별 이동 버튼 (스크롤 위치 유지)
             el.querySelector('.move-top').addEventListener('click', async (e) => {
                 e.stopPropagation();
+                const scrollY = queueList.scrollTop;
                 await api('/api/queue/move', { method: 'POST', body: JSON.stringify({ ids: [item.id], position: 'top' }) });
                 await loadQueue();
+                queueList.scrollTop = scrollY;
                 showStatus('▲ 맨 위로 이동', 'success');
                 setTimeout(() => showStatus(''), 1500);
             });
             el.querySelector('.move-bottom').addEventListener('click', async (e) => {
                 e.stopPropagation();
+                const scrollY = queueList.scrollTop;
                 await api('/api/queue/move', { method: 'POST', body: JSON.stringify({ ids: [item.id], position: 'bottom' }) });
                 await loadQueue();
+                queueList.scrollTop = scrollY;
                 showStatus('▼ 맨 아래로 이동', 'success');
                 setTimeout(() => showStatus(''), 1500);
             });
@@ -580,16 +584,30 @@
         await loadQueue();
     }
 
+    // ── URL에서 영상 슬러그 추출 (로케일 접두 제거) ──
+    function extractVideoSlug(url) {
+        try {
+            const u = new URL(url);
+            const pathParts = u.pathname.split('/').filter(Boolean);
+            // 로케일 접두어 제거 (ko, en, ja, zh 등 2글자 or 2-2글자)
+            const slug = pathParts.length > 0 ? pathParts[pathParts.length - 1] : '';
+            return slug.toLowerCase();
+        } catch {
+            return url.split('?')[0].toLowerCase();
+        }
+    }
+
     // ── 중복 URL 제거 ──
     async function deduplicateQueue() {
-        const urlMap = new Map(); // url -> 첫 번째 item
+        const slugMap = new Map(); // slug -> 첫 번째 item
         const dupeIds = [];
         for (const item of queue) {
-            const normalizedUrl = item.url.split('?')[0];
-            if (urlMap.has(normalizedUrl)) {
+            const slug = extractVideoSlug(item.url);
+            if (!slug) continue;
+            if (slugMap.has(slug)) {
                 dupeIds.push(item.id);
             } else {
-                urlMap.set(normalizedUrl, item);
+                slugMap.set(slug, item);
             }
         }
         if (dupeIds.length === 0) {
@@ -1166,6 +1184,27 @@
             ctxTargetItem = queue[idx];
             if (!ctxTargetItem) return;
 
+            // 동적 메뉴 생성
+            let menuHtml = `
+                <div class="ctx-item" data-action="play">▶ 재생</div>
+                <div class="ctx-item" data-action="download">⬇️ 다운로드</div>
+                <div class="ctx-item" data-action="openSite">🌐 사이트 방문</div>
+            `;
+            // 카테고리 빠른 이동
+            if (categories.length > 0) {
+                menuHtml += `<div class="ctx-sep"></div>`;
+                for (const cat of categories) {
+                    const isCurrent = ctxTargetItem.category === cat.id;
+                    menuHtml += `<div class="ctx-item ${isCurrent ? 'ctx-current' : ''}" data-action="moveCat" data-cat-id="${cat.id}"><span class="ctx-cat-dot" style="background:${cat.color}"></span> ${escapeHtml(cat.name)}${isCurrent ? ' ✓' : ''}</div>`;
+                }
+                menuHtml += `<div class="ctx-item" data-action="moveCat" data-cat-id=""><span class="ctx-cat-dot" style="background:#888"></span> 미분류</div>`;
+            }
+            menuHtml += `
+                <div class="ctx-sep"></div>
+                <div class="ctx-item ctx-danger" data-action="delete">🗑 삭제</div>
+            `;
+            ctxMenu.innerHTML = menuHtml;
+
             ctxMenu.style.display = 'block';
             // 위치 결정 (화면 밖으로 넘어가지 않게)
             let x = e.clientX, y = e.clientY;
@@ -1224,6 +1263,23 @@
                     if (confirm(`"${item.title}" 삭제?`)) {
                         deleteItem(item.id);
                     }
+                    break;
+                }
+                case 'moveCat': {
+                    const catId = e.target.closest('.ctx-item')?.dataset.catId || '';
+                    try {
+                        await api(`/api/queue/${item.id}/category`, {
+                            method: 'POST',
+                            body: JSON.stringify({ category: catId || null }),
+                        });
+                        // 로컬 업데이트
+                        const qItem = queue.find(q => q.id === item.id);
+                        if (qItem) qItem.category = catId || undefined;
+                        renderQueue();
+                        const catName = catId ? (categories.find(c => c.id === catId)?.name || '') : '미분류';
+                        showStatus(`🏷️ ${catName}(으)로 이동`, 'success');
+                        setTimeout(() => showStatus(''), 2000);
+                    } catch { /* ignore */ }
                     break;
                 }
             }
