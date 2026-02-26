@@ -1109,6 +1109,101 @@
 
     btnFullscreen.addEventListener('click', toggleFullscreen);
 
+    // ── 구간 다운로드 ──
+    const clipPanel = $('#clipPanel');
+    const clipStart = $('#clipStart');
+    const clipEnd = $('#clipEnd');
+    const clipStatus = $('#clipStatus');
+    const clipDownloadBtn = $('#clipDownload');
+    const btnClip = $('#btnClip');
+
+    if (btnClip && clipPanel) {
+        btnClip.addEventListener('click', () => {
+            clipPanel.style.display = clipPanel.style.display === 'none' ? 'block' : 'none';
+        });
+
+        $('#clipClose').addEventListener('click', () => { clipPanel.style.display = 'none'; });
+
+        $('#clipSetStart').addEventListener('click', () => {
+            if (video.currentTime) clipStart.value = formatTime(video.currentTime);
+        });
+
+        $('#clipSetEnd').addEventListener('click', () => {
+            if (video.currentTime) clipEnd.value = formatTime(video.currentTime);
+        });
+
+        clipDownloadBtn.addEventListener('click', async () => {
+            if (!currentItem) { clipStatus.textContent = '❌ 영상을 먼저 재생하세요'; return; }
+
+            const startSec = parseTimeToSeconds(clipStart.value);
+            const endSec = parseTimeToSeconds(clipEnd.value);
+
+            if (endSec <= startSec) {
+                clipStatus.textContent = '❌ 종료 시간이 시작 시간보다 커야 합니다';
+                return;
+            }
+
+            clipDownloadBtn.disabled = true;
+            clipStatus.textContent = '⏳ 준비 중...';
+
+            try {
+                const result = await api('/api/clip-download', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        url: currentItem.url,
+                        start: startSec,
+                        end: endSec,
+                        title: currentItem.title || 'clip',
+                    }),
+                });
+
+                if (result.error) {
+                    clipStatus.textContent = `❌ ${result.error}`;
+                    clipDownloadBtn.disabled = false;
+                    return;
+                }
+
+                // 폴링으로 상태 확인
+                const clipId = result.id;
+                const pollInterval = setInterval(async () => {
+                    try {
+                        const st = await api(`/api/clip-status/${clipId}`);
+                        switch (st.status) {
+                            case 'preparing':
+                            case 'extracting':
+                                clipStatus.textContent = '⏳ 스트림 추출 중...';
+                                break;
+                            case 'downloading':
+                                clipStatus.textContent = '⬇️ 다운로드 중...';
+                                break;
+                            case 'done':
+                                clearInterval(pollInterval);
+                                const sizeMB = st.size ? (st.size / 1024 / 1024).toFixed(1) : '?';
+                                clipStatus.textContent = `✅ 완료! (${sizeMB}MB)`;
+                                clipDownloadBtn.disabled = false;
+                                break;
+                            case 'error':
+                                clearInterval(pollInterval);
+                                clipStatus.textContent = `❌ ${st.error || '오류'}`;
+                                clipDownloadBtn.disabled = false;
+                                break;
+                        }
+                    } catch { /* ignore */ }
+                }, 2000);
+            } catch (err) {
+                clipStatus.textContent = `❌ ${err.message}`;
+                clipDownloadBtn.disabled = false;
+            }
+        });
+    }
+
+    function parseTimeToSeconds(timeStr) {
+        const parts = timeStr.split(':').map(Number);
+        if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+        if (parts.length === 2) return parts[0] * 60 + parts[1];
+        return parts[0] || 0;
+    }
+
     btnAdd.addEventListener('click', addToQueue);
     urlInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') addToQueue();

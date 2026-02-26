@@ -71,9 +71,27 @@
                             <option value="1.5">1.5x</option>
                             <option value="2">2x</option>
                         </select>
+                        <button class="ctrl-btn" id="btnClip" title="구간 다운로드 (✂️)">✂️</button>
                         <button class="ctrl-btn" id="btnDownload" title="다운로드">&#11015;&#65039;</button>
                         <button class="ctrl-btn" id="btnFullscreen" title="전체 화면 (F)">&#9974;</button>
                     </div>
+                </div>
+            </div>
+
+            <!-- 구간 다운로드 패널 -->
+            <div class="clip-panel" id="clipPanel" style="display:none">
+                <div class="clip-row">
+                    <span class="clip-label">✂️ 구간 다운로드</span>
+                    <div class="clip-inputs">
+                        <button class="clip-set-btn" id="clipSetStart" title="현재 위치를 시작점으로">▶ 시작</button>
+                        <input type="text" class="clip-time" id="clipStart" placeholder="0:00" value="0:00">
+                        <span class="clip-sep">~</span>
+                        <input type="text" class="clip-time" id="clipEnd" placeholder="0:00" value="0:00">
+                        <button class="clip-set-btn" id="clipSetEnd" title="현재 위치를 종료점으로">⏹ 끝</button>
+                    </div>
+                    <button class="clip-dl-btn" id="clipDownload" title="구간 다운로드">⬇️ 다운로드</button>
+                    <span class="clip-status" id="clipStatus"></span>
+                    <button class="clip-close-btn" id="clipClose" title="닫기">✕</button>
                 </div>
             </div>
 

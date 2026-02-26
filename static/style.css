@@ -1836,8 +1836,8 @@ body.drag-over::after {
 
 .dedupe-group-header {
     background: var(--bg-tertiary);
-    padding: 8px 12px;
-    font-size: 12px;
+    padding: 10px 14px;
+    font-size: 13px;
     color: var(--text-secondary);
     font-weight: 600;
 }
@@ -1863,8 +1863,8 @@ body.drag-over::after {
 }
 
 .dedupe-item img {
-    width: 60px;
-    height: 34px;
+    width: 80px;
+    height: 45px;
     object-fit: cover;
     border-radius: 3px;
     flex-shrink: 0;
@@ -1876,7 +1876,7 @@ body.drag-over::after {
 }
 
 .dedupe-item-title {
-    font-size: 12px;
+    font-size: 14px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1884,7 +1884,7 @@ body.drag-over::after {
 }
 
 .dedupe-item-url {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1943,4 +1943,103 @@ body.drag-over::after {
 .dedupe-footer .dedupe-delete:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+}
+
+/* 구간 다운로드 패널 */
+.clip-panel {
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--border);
+    padding: 6px 20px;
+}
+
+.clip-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.clip-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+
+.clip-inputs {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.clip-time {
+    width: 60px;
+    padding: 3px 6px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: 12px;
+    text-align: center;
+    font-family: monospace;
+}
+
+.clip-sep {
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.clip-set-btn {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: 10px;
+    padding: 3px 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.clip-set-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.clip-dl-btn {
+    background: var(--accent);
+    border: none;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.clip-dl-btn:hover {
+    opacity: 0.85;
+}
+
+.clip-dl-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.clip-status {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.clip-close-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 13px;
+    margin-left: auto;
+}
+
+.clip-close-btn:hover {
+    color: var(--text-primary);
 }

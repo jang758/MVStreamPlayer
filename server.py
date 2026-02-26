@@ -2514,6 +2514,137 @@ def ts_proxy():
         return f"세그먼트 프록시 오류: {e}", 502
 
 # ──────────────────────────────────────────────
+# API - 구간 다운로드 (ffmpeg로 특정 시간대 추출)
+# ──────────────────────────────────────────────
+_clip_status = {}  # uid -> {status, progress, error, filename}
+
+@app.route('/api/clip-download', methods=['POST'])
+def clip_download():
+    """HLS 스트림에서 특정 구간만 다운로드합니다."""
+    req = request.get_json(force=True)
+    url = req.get('url', '').strip()
+    start_time = req.get('start', 0)
+    end_time = req.get('end', 0)
+    title = req.get('title', 'clip')
+
+    if not url:
+        return jsonify({"error": "URL 필요"}), 400
+    if end_time <= start_time:
+        return jsonify({"error": "종료 시간이 시작 시간보다 커야 합니다"}), 400
+
+    uid = hashlib.md5(f"{url}_{start_time}_{end_time}_{time.time()}".encode()).hexdigest()[:12]
+    _clip_status[uid] = {"status": "preparing", "progress": 0, "error": None, "filename": None}
+
+    # 배경 스레드에서 ffmpeg 실행
+    threading.Thread(target=_do_clip_download, args=(uid, url, start_time, end_time, title), daemon=True).start()
+    return jsonify({"id": uid, "status": "preparing"})
+
+
+@app.route('/api/clip-status/<uid>')
+def clip_status(uid):
+    """구간 다운로드 상태 확인"""
+    status = _clip_status.get(uid, {"status": "not_found"})
+    return jsonify(status)
+
+
+def _do_clip_download(uid, url, start_time, end_time, title):
+    """ffmpeg로 구간 다운로드 실행"""
+    try:
+        # 다운로드 폴더 설정
+        settings = _load_settings()
+        dl_folder = settings.get("downloadFolder", "").strip()
+        if dl_folder and os.path.isdir(dl_folder):
+            out_dir = Path(dl_folder)
+        else:
+            out_dir = DOWNLOADS_DIR
+        out_dir.mkdir(exist_ok=True)
+
+        # 스트림 URL 찾기
+        data = _load_data()
+        queue_item = next((q for q in data["queue"] if q.get("url") == url), None)
+        stream_url = queue_item.get("stream_url", "") if queue_item else ""
+        stored_headers = queue_item.get("http_headers", {}) if queue_item else {}
+
+        if not stream_url:
+            # yt-dlp로 스트림 URL 추출
+            _clip_status[uid]["status"] = "extracting"
+            parsed = urllib.parse.urlparse(url)
+            is_custom = any(d in parsed.netloc for d in CUSTOM_DOMAINS)
+            if is_custom:
+                try:
+                    re_info = _custom_extract(url)
+                    stream_url = re_info.get("url", "")
+                    stored_headers = re_info.get("http_headers", {})
+                except Exception:
+                    pass
+            if not stream_url:
+                opts = _ydl_opts(extract_only=True)
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    stream_url = info.get("url", "")
+
+        if not stream_url:
+            _clip_status[uid] = {"status": "error", "progress": 0, "error": "스트림 URL을 찾을 수 없습니다", "filename": None}
+            return
+
+        # 파일명 설정
+        safe_title = _sanitize_filename(title)
+        start_str = _format_ffmpeg_time(start_time)
+        end_str = _format_ffmpeg_time(end_time)
+        out_file = out_dir / f"{safe_title}_clip_{start_str.replace(':','')}_{end_str.replace(':','')}.mp4"
+
+        # ffmpeg 명령 구성
+        cmd = ["ffmpeg", "-y", "-ss", str(start_time)]
+        # 헤더 추가
+        if stored_headers:
+            headers_str = "\r\n".join(f"{k}: {v}" for k, v in stored_headers.items())
+            cmd.extend(["-headers", headers_str])
+        cmd.extend([
+            "-i", stream_url,
+            "-to", str(end_time - start_time),  # -ss 이후의 상대 시간
+            "-c", "copy",
+            "-avoid_negative_ts", "make_zero",
+            str(out_file)
+        ])
+
+        _clip_status[uid]["status"] = "downloading"
+        print(f"[구간 다운로드] 시작: {safe_title} ({start_str} ~ {end_str})")
+
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+        )
+        _, stderr_data = proc.communicate(timeout=600)  # 10분 타임아웃
+
+        if proc.returncode == 0 and out_file.exists():
+            file_size = out_file.stat().st_size
+            _clip_status[uid] = {
+                "status": "done", "progress": 100,
+                "error": None, "filename": str(out_file),
+                "size": file_size
+            }
+            print(f"[구간 다운로드] 완료: {out_file.name} ({file_size // 1024}KB)")
+        else:
+            err_msg = stderr_data.decode('utf-8', errors='replace')[-200:] if stderr_data else "알 수 없는 오류"
+            _clip_status[uid] = {"status": "error", "progress": 0, "error": err_msg, "filename": None}
+            print(f"[구간 다운로드] 실패: {err_msg[:100]}")
+
+    except subprocess.TimeoutExpired:
+        _clip_status[uid] = {"status": "error", "progress": 0, "error": "타임아웃 (10분 초과)", "filename": None}
+    except Exception as e:
+        _clip_status[uid] = {"status": "error", "progress": 0, "error": str(e), "filename": None}
+        print(f"[구간 다운로드] 오류: {e}")
+
+
+def _format_ffmpeg_time(seconds):
+    """초를 HH:MM:SS 형식으로 변환"""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+# ──────────────────────────────────────────────
 # API - 영상 다운로드 (대기열 시스템, 최대 2개 동시)
 # ──────────────────────────────────────────────
 _download_status = {}  # id -> {status, progress, filename, error, title, url}
