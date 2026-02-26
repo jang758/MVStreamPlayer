@@ -83,6 +83,7 @@
     const dlCounter = $('#dlCounter');
     const dlClearDone = $('#dlClearDone');
     const settingMaxDL = $('#settingMaxDL');
+    const btnDedupe = $('#btnDedupe');
 
     // ── 상태 ──
     let queue = [];
@@ -579,6 +580,38 @@
         await loadQueue();
     }
 
+    // ── 중복 URL 제거 ──
+    async function deduplicateQueue() {
+        const urlMap = new Map(); // url -> 첫 번째 item
+        const dupeIds = [];
+        for (const item of queue) {
+            const normalizedUrl = item.url.split('?')[0];
+            if (urlMap.has(normalizedUrl)) {
+                dupeIds.push(item.id);
+            } else {
+                urlMap.set(normalizedUrl, item);
+            }
+        }
+        if (dupeIds.length === 0) {
+            showStatus('✅ 중복된 URL이 없습니다.', 'success');
+            setTimeout(() => showStatus(''), 2000);
+            return;
+        }
+        if (!confirm(`${dupeIds.length}개의 중복 항목이 발견되었습니다. 삭제하시겠습니까?`)) return;
+        showStatus(`⏳ ${dupeIds.length}개 중복 삭제 중...`, '');
+        try {
+            await api('/api/queue/bulk-delete', {
+                method: 'POST',
+                body: JSON.stringify({ ids: dupeIds }),
+            });
+            showStatus(`✅ ${dupeIds.length}개 중복 삭제 완료.`, 'success');
+            await loadQueue();
+            setTimeout(() => showStatus(''), 3000);
+        } catch (e) {
+            showStatus(`❌ 삭제 오류: ${e.message}`, 'error');
+        }
+    }
+
     // ── 재생 ──
     async function playItem(index) {
         if (index < 0 || index >= queue.length) return;
@@ -945,6 +978,7 @@
     });
 
     btnClearQueue.addEventListener('click', clearQueue);
+    if (btnDedupe) btnDedupe.addEventListener('click', deduplicateQueue);
 
     shortcutsToggle.addEventListener('click', () => {
         shortcutsPanel.classList.toggle('show');

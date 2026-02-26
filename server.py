@@ -377,6 +377,19 @@ _BROWSE_INJECT_JS = r"""
         #sp-ctx-menu .sp-ctx-item.sp-ctx-disabled:hover { background: none; color: #666; }
         /* 바닥 여백 보정 */
         body { padding-bottom: 48px !important; }
+        /* 추가 대기열 카운터 */
+        #sp-pending {
+            font-size: 11px; color: #4a9eff; white-space: nowrap;
+            font-weight: 600; transition: all 0.2s;
+        }
+        #sp-pending.pulse {
+            animation: sp-pulse 0.4s ease;
+        }
+        @keyframes sp-pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.15); color: #6bb3ff; }
+            100% { transform: scale(1); }
+        }
     `;
     document.head.appendChild(style);
 
@@ -497,6 +510,7 @@ _BROWSE_INJECT_JS = r"""
         <button class="sp-icon-btn" id="sp-refresh-btn" title="새로고침">↻</button>
         <button class="sp-icon-btn" id="sp-newtab-btn" title="현재 페이지를 새 탭으로">⧉</button>
         <span class="sp-status" id="sp-status"></span>
+        <span id="sp-pending"></span>
         <span class="sp-count" id="sp-count"></span>
     `;
     document.body.appendChild(toolbar);
@@ -567,6 +581,88 @@ _BROWSE_INJECT_JS = r"""
         });
     }
 
+    /* ── 추가 대기열 추적 ── */
+    const _pendingAdds = new Map(); // url -> {status, retries, btn}
+    const pendingEl = document.getElementById('sp-pending');
+
+    function updatePendingUI() {
+        const total = _pendingAdds.size;
+        const remaining = [..._pendingAdds.values()].filter(v => v.status !== 'done').length;
+        if (total === 0 || remaining === 0) {
+            pendingEl.textContent = '';
+            // 모두 완료 시 초기화
+            if (total > 0 && remaining === 0) {
+                setTimeout(() => _pendingAdds.clear(), 2000);
+            }
+            return;
+        }
+        pendingEl.textContent = `대기: ${remaining}/${total}`;
+        pendingEl.classList.remove('pulse');
+        void pendingEl.offsetWidth; // reflow
+        pendingEl.classList.add('pulse');
+    }
+
+    async function addWithRetry(fullUrl, btn) {
+        if (addedUrls.has(fullUrl)) return;
+        if (_pendingAdds.has(fullUrl)) return; // 이미 대기 중
+
+        _pendingAdds.set(fullUrl, { status: 'pending', retries: 0, btn });
+        updatePendingUI();
+        btn.disabled = true; btn.textContent = '…';
+
+        const MAX_RETRIES = 30;
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            if (addedUrls.has(fullUrl)) {
+                _pendingAdds.get(fullUrl).status = 'done';
+                btn.textContent = '✓'; btn.classList.add('sp-card-added');
+                updatePendingUI(); updateCount();
+                return;
+            }
+            try {
+                statusEl.textContent = `⏳ 추가 중... (${attempt > 0 ? attempt + 1 + '회' : ''})`;
+                const res = await window.pywebview.api.add_to_queue(fullUrl);
+                if (res.ok) {
+                    addedUrls.add(fullUrl);
+                    btn.textContent = '✓'; btn.classList.add('sp-card-added');
+                    statusEl.textContent = '✅ ' + (res.title || '추가 완료');
+                    _pendingAdds.get(fullUrl).status = 'done';
+                    updatePendingUI(); updateCount();
+                    setTimeout(() => { statusEl.textContent = ''; }, 3000);
+                    return;
+                } else if (res.duplicate) {
+                    addedUrls.add(fullUrl);
+                    btn.textContent = '✓'; btn.classList.add('sp-card-added');
+                    statusEl.textContent = '이미 대기열에 있습니다.';
+                    _pendingAdds.get(fullUrl).status = 'done';
+                    updatePendingUI();
+                    setTimeout(() => { statusEl.textContent = ''; }, 2000);
+                    return;
+                } else {
+                    // 추출 실패 → 재시도
+                    statusEl.textContent = `⚠️ 실패 (${attempt+1}/${MAX_RETRIES}), 5초 후 재시도... [${res.error || ''}]`;
+                    btn.textContent = `${MAX_RETRIES - attempt - 1}`;
+                    _pendingAdds.get(fullUrl).retries = attempt + 1;
+                    updatePendingUI();
+                }
+            } catch(e) {
+                statusEl.textContent = `⚠️ 오류 (${attempt+1}/${MAX_RETRIES}), 5초 후 재시도...`;
+                btn.textContent = `${MAX_RETRIES - attempt - 1}`;
+                _pendingAdds.get(fullUrl).retries = attempt + 1;
+                updatePendingUI();
+            }
+            if (attempt < MAX_RETRIES - 1) {
+                await new Promise(r => setTimeout(r, 5000));
+            }
+        }
+        // 모든 재시도 실패
+        btn.textContent = '!';
+        statusEl.textContent = '❌ 추가 실패 (30회 시도)';
+        _pendingAdds.get(fullUrl).status = 'failed';
+        updatePendingUI();
+        setTimeout(() => { btn.textContent = '+'; btn.disabled = false; statusEl.textContent = ''; }, 5000);
+        setTimeout(() => { if (_pendingAdds.get(fullUrl)?.status === 'failed') _pendingAdds.delete(fullUrl); updatePendingUI(); }, 5000);
+    }
+
     /* ── 카드 오버레이 버튼 인젝션 ── */
     function injectCardButtons() {
         document.querySelectorAll('a[href]').forEach(a => {
@@ -587,38 +683,10 @@ _BROWSE_INJECT_JS = r"""
             btn.textContent = addedUrls.has(fullUrl) ? '✓' : '+';
             btn.title = addedUrls.has(fullUrl) ? '추가됨' : '대기열에 추가';
 
-            btn.addEventListener('click', async (e) => {
+            btn.addEventListener('click', (e) => {
                 e.preventDefault(); e.stopPropagation();
                 if (addedUrls.has(fullUrl)) return;
-                btn.disabled = true; btn.textContent = '…';
-                statusEl.textContent = '⏳ 추가 중...';
-                try {
-                    const res = await window.pywebview.api.add_to_queue(fullUrl);
-                    if (res.error) {
-                        if (res.duplicate) {
-                            addedUrls.add(fullUrl); btn.textContent = '✓'; btn.classList.add('sp-card-added');
-                            statusEl.textContent = '이미 대기열에 있습니다.';
-                        } else {
-                            btn.textContent = '!';
-                            statusEl.textContent = '❌ ' + res.error;
-                            /* 실패 시 재시도 가능하도록 복구 */
-                            setTimeout(() => { btn.textContent = '+'; btn.disabled = false; }, 5000);
-                            setTimeout(() => { statusEl.textContent = ''; }, 8000);
-                            return;
-                        }
-                    } else {
-                        addedUrls.add(fullUrl);
-                        btn.textContent = '✓'; btn.classList.add('sp-card-added');
-                        statusEl.textContent = '✅ ' + (res.title || '추가 완료');
-                        updateCount();
-                    }
-                    setTimeout(() => { statusEl.textContent = ''; }, 3000);
-                } catch(e) {
-                    btn.textContent = '!';
-                    statusEl.textContent = '❌ 오류: ' + (e.message || '추가 실패');
-                    setTimeout(() => { btn.textContent = '+'; btn.disabled = false; }, 5000);
-                    setTimeout(() => { statusEl.textContent = ''; }, 8000);
-                }
+                addWithRetry(fullUrl, btn);
             });
             wrap.appendChild(btn);
         });
