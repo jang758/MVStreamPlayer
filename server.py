@@ -2601,47 +2601,43 @@ def _do_clip_download(uid, url, start_time, end_time, title, ffmpeg_path):
             out_dir = DOWNLOADS_DIR
         out_dir.mkdir(exist_ok=True)
 
-        # 스트림 URL 찾기 (실제 CDN URL이 필요)
+        # 스트림 URL 추출 (stream_video와 동일한 로직)
         _clip_status[uid]["status"] = "extracting"
         print(f"[구간 다운로드] 스트림 URL 추출 중: {url[:80]}")
 
-        stream_url = None
-        stored_headers = {}
+        video_url = None
+        http_headers = {}
 
         # 1) 대기열에서 저장된 stream_url 확인
+        item_id = _url_id(url)
         data = _load_data()
-        queue_item = next((q for q in data["queue"] if q.get("url") == url), None)
-        if queue_item:
-            stream_url = queue_item.get("stream_url", "")
-            stored_headers = queue_item.get("http_headers", {})
+        queue_item = next((q for q in data["queue"] if q["id"] == item_id), None)
 
-        # 2) stream_url이 없으면 추출
-        if not stream_url:
-            parsed = urllib.parse.urlparse(url)
-            is_custom = any(d in parsed.netloc for d in CUSTOM_DOMAINS)
-            if is_custom:
-                try:
-                    re_info = _custom_extract(url)
-                    stream_url = re_info.get("url", "")
-                    stored_headers = re_info.get("http_headers", {})
-                except Exception as e:
-                    print(f"[구간 다운로드] 커스텀 추출 실패: {e}")
-            if not stream_url:
-                try:
-                    opts = _ydl_opts(extract_only=True)
-                    with yt_dlp.YoutubeDL(opts) as ydl:
-                        info = ydl.extract_info(url, download=False)
-                        stream_url = info.get("url", "")
-                        if not stored_headers and info.get("http_headers"):
-                            stored_headers = info["http_headers"]
-                except Exception as e:
-                    print(f"[구간 다운로드] yt-dlp 추출 실패: {e}")
+        if queue_item and queue_item.get("stream_url"):
+            video_url = queue_item["stream_url"]
+            http_headers = queue_item.get("http_headers", {})
+            print(f"[구간 다운로드] 저장된 stream_url 사용: {video_url[:100]}...")
+        else:
+            print(f"[구간 다운로드] 저장된 URL 없음 → _extract_info 시작")
 
-        if not stream_url:
-            _clip_status[uid] = {"status": "error", "progress": 0, "error": "스트림 URL을 찾을 수 없습니다", "filename": None}
+        # 2) 없으면 추출
+        if not video_url:
+            try:
+                info = _extract_info(url)
+                video_url = info.get("url")
+                if not video_url:
+                    formats = info.get("formats", [])
+                    if formats:
+                        video_url = formats[-1].get("url")
+                http_headers = info.get("http_headers", {})
+                print(f"[구간 다운로드] 추출 완료: {video_url[:100] if video_url else 'NONE'}...")
+            except Exception as e:
+                print(f"[구간 다운로드] 추출 실패: {e}")
+
+        if not video_url:
+            _clip_status[uid] = {"status": "error", "progress": 0,
+                                 "error": "스트림 URL을 찾을 수 없습니다", "filename": None}
             return
-
-        print(f"[구간 다운로드] 스트림 URL: {stream_url[:120]}...")
 
         # 파일명 설정
         safe_title = _sanitize_filename(title)
@@ -2653,14 +2649,16 @@ def _do_clip_download(uid, url, start_time, end_time, title, ffmpeg_path):
         duration = end_time - start_time
         cmd = [ffmpeg_path, "-y"]
 
-        # 헤더 추가 (Referer, Origin 등)
-        if stored_headers:
-            headers_str = "\r\n".join(f"{k}: {v}" for k, v in stored_headers.items())
-            cmd.extend(["-headers", headers_str + "\r\n"])
+        # 헤더 추가
+        req_headers = {'User-Agent': USER_AGENT}
+        if http_headers:
+            req_headers.update(http_headers)
+        headers_str = "\r\n".join(f"{k}: {v}" for k, v in req_headers.items()) + "\r\n"
+        cmd.extend(["-headers", headers_str])
 
         cmd.extend([
             "-ss", str(start_time),
-            "-i", stream_url,
+            "-i", video_url,
             "-t", str(duration),
             "-c", "copy",
             "-avoid_negative_ts", "make_zero",
@@ -2670,13 +2668,21 @@ def _do_clip_download(uid, url, start_time, end_time, title, ffmpeg_path):
 
         _clip_status[uid]["status"] = "downloading"
         print(f"[구간 다운로드] 시작: {safe_title} ({start_str} ~ {end_str})")
-        print(f"[구간 다운로드] 명령: {' '.join(cmd[:6])}... -> {out_file.name}")
+        print(f"[구간 다운로드] ffmpeg: {ffmpeg_path}")
+        print(f"[구간 다운로드] 출력: {out_file}")
 
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         )
-        _, stderr_data = proc.communicate(timeout=600)  # 10분 타임아웃
+        _, stderr_data = proc.communicate(timeout=600)
+
+        stderr_text = stderr_data.decode('utf-8', errors='replace') if stderr_data else ""
+        print(f"[구간 다운로드] ffmpeg 종료코드: {proc.returncode}")
+        if stderr_text:
+            # 마지막 5줄만 출력
+            for line in stderr_text.strip().split('\n')[-5:]:
+                print(f"  [ffmpeg] {line.strip()}")
 
         if proc.returncode == 0 and out_file.exists() and out_file.stat().st_size > 1000:
             file_size = out_file.stat().st_size
@@ -2687,12 +2693,9 @@ def _do_clip_download(uid, url, start_time, end_time, title, ffmpeg_path):
             }
             print(f"[구간 다운로드] ✅ 완료: {out_file.name} ({file_size // 1024}KB)")
         else:
-            err_text = stderr_data.decode('utf-8', errors='replace') if stderr_data else ""
-            # 유용한 에러 메시지 추출
-            err_lines = [l for l in err_text.split('\n') if 'error' in l.lower() or 'fail' in l.lower() or 'denied' in l.lower()]
-            err_msg = err_lines[-1].strip() if err_lines else err_text[-300:].strip()
-            if not err_msg:
-                err_msg = f"ffmpeg 종료 코드: {proc.returncode}"
+            err_lines = [l for l in stderr_text.split('\n')
+                         if any(w in l.lower() for w in ['error', 'fail', 'denied', 'invalid', 'no such'])]
+            err_msg = err_lines[-1].strip() if err_lines else f"ffmpeg 종료 코드: {proc.returncode}"
             _clip_status[uid] = {"status": "error", "progress": 0, "error": err_msg, "filename": None}
             print(f"[구간 다운로드] ❌ 실패: {err_msg[:200]}")
 

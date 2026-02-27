@@ -78,20 +78,32 @@
                 </div>
             </div>
 
-            <!-- 구간 다운로드 패널 -->
+            <!-- 구간 다운로드 패널 (Bandicut-style) -->
             <div class="clip-panel" id="clipPanel" style="display:none">
                 <div class="clip-row">
                     <span class="clip-label">✂️ 구간 다운로드</span>
                     <div class="clip-inputs">
-                        <button class="clip-set-btn" id="clipSetStart" title="현재 위치를 시작점으로">▶ 시작</button>
-                        <input type="text" class="clip-time" id="clipStart" placeholder="0:00" value="0:00">
-                        <span class="clip-sep">~</span>
-                        <input type="text" class="clip-time" id="clipEnd" placeholder="0:00" value="0:00">
-                        <button class="clip-set-btn" id="clipSetEnd" title="현재 위치를 종료점으로">⏹ 끝</button>
+                        <div class="clip-point">
+                            <span class="clip-point-label">시작</span>
+                            <button class="clip-set-btn" id="clipSetStart" title="현재 위치를 시작점으로 설정">◀ 현재</button>
+                            <input type="text" class="clip-time" id="clipStart" value="00:00:00">
+                        </div>
+                        <span class="clip-sep">→</span>
+                        <div class="clip-point">
+                            <span class="clip-point-label">끝</span>
+                            <input type="text" class="clip-time" id="clipEnd" value="00:00:00">
+                            <button class="clip-set-btn" id="clipSetEnd" title="현재 위치를 종료점으로 설정">현재 ▶</button>
+                        </div>
+                        <span class="clip-duration" id="clipDuration">0초</span>
                     </div>
                     <button class="clip-dl-btn" id="clipDownload" title="구간 다운로드">⬇️ 다운로드</button>
                     <span class="clip-status" id="clipStatus"></span>
                     <button class="clip-close-btn" id="clipClose" title="닫기">✕</button>
+                </div>
+                <div class="clip-range-bar" id="clipRangeBar">
+                    <div class="clip-range-fill" id="clipRangeFill"></div>
+                    <div class="clip-marker clip-marker-start" id="clipMarkerStart" title="시작점 드래그"></div>
+                    <div class="clip-marker clip-marker-end" id="clipMarkerEnd" title="끝점 드래그"></div>
                 </div>
             </div>
 

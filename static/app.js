@@ -1109,36 +1109,114 @@
 
     btnFullscreen.addEventListener('click', toggleFullscreen);
 
-    // ── 구간 다운로드 ──
+    // ── 구간 다운로드 (Bandicut-style) ──
     const clipPanel = $('#clipPanel');
     const clipStart = $('#clipStart');
     const clipEnd = $('#clipEnd');
     const clipStatus = $('#clipStatus');
     const clipDownloadBtn = $('#clipDownload');
+    const clipDuration = $('#clipDuration');
+    const clipRangeBar = $('#clipRangeBar');
+    const clipRangeFill = $('#clipRangeFill');
+    const clipMarkerStart = $('#clipMarkerStart');
+    const clipMarkerEnd = $('#clipMarkerEnd');
     const btnClip = $('#btnClip');
+
+    let clipStartSec = 0, clipEndSec = 0;
+
+    function formatTimeHMS(sec) {
+        const h = Math.floor(sec / 3600);
+        const m = Math.floor((sec % 3600) / 60);
+        const s = Math.floor(sec % 60);
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+
+    function updateClipUI() {
+        clipStart.value = formatTimeHMS(clipStartSec);
+        clipEnd.value = formatTimeHMS(clipEndSec);
+        const dur = Math.max(0, clipEndSec - clipStartSec);
+        const durMin = Math.floor(dur / 60);
+        const durS = Math.floor(dur % 60);
+        clipDuration.textContent = durMin > 0 ? `${durMin}분 ${durS}초` : `${durS}초`;
+        // 범위 바 업데이트
+        if (video.duration && isFinite(video.duration) && video.duration > 0) {
+            const startPct = (clipStartSec / video.duration) * 100;
+            const endPct = (clipEndSec / video.duration) * 100;
+            clipMarkerStart.style.left = startPct + '%';
+            clipMarkerEnd.style.left = endPct + '%';
+            clipRangeFill.style.left = startPct + '%';
+            clipRangeFill.style.width = (endPct - startPct) + '%';
+        }
+    }
 
     if (btnClip && clipPanel) {
         btnClip.addEventListener('click', () => {
-            clipPanel.style.display = clipPanel.style.display === 'none' ? 'block' : 'none';
+            const isHidden = clipPanel.style.display === 'none';
+            clipPanel.style.display = isHidden ? 'block' : 'none';
+            if (isHidden && video.duration && isFinite(video.duration)) {
+                clipEndSec = Math.floor(video.duration);
+                updateClipUI();
+            }
         });
 
         $('#clipClose').addEventListener('click', () => { clipPanel.style.display = 'none'; });
 
         $('#clipSetStart').addEventListener('click', () => {
-            if (video.currentTime) clipStart.value = formatTime(video.currentTime);
+            clipStartSec = Math.floor(video.currentTime || 0);
+            updateClipUI();
         });
 
         $('#clipSetEnd').addEventListener('click', () => {
-            if (video.currentTime) clipEnd.value = formatTime(video.currentTime);
+            clipEndSec = Math.floor(video.currentTime || 0);
+            updateClipUI();
         });
 
+        // 입력 필드 → 초 동기화
+        clipStart.addEventListener('change', () => {
+            clipStartSec = parseTimeToSeconds(clipStart.value);
+            updateClipUI();
+        });
+        clipEnd.addEventListener('change', () => {
+            clipEndSec = parseTimeToSeconds(clipEnd.value);
+            updateClipUI();
+        });
+
+        // 드래그 마커
+        function setupMarkerDrag(marker, isStart) {
+            let dragging = false;
+            marker.addEventListener('mousedown', (e) => { dragging = true; e.preventDefault(); });
+            document.addEventListener('mousemove', (e) => {
+                if (!dragging || !video.duration) return;
+                const rect = clipRangeBar.getBoundingClientRect();
+                const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                const sec = Math.floor(ratio * video.duration);
+                if (isStart) { clipStartSec = Math.min(sec, clipEndSec); }
+                else { clipEndSec = Math.max(sec, clipStartSec); }
+                updateClipUI();
+            });
+            document.addEventListener('mouseup', () => { dragging = false; });
+        }
+        setupMarkerDrag(clipMarkerStart, true);
+        setupMarkerDrag(clipMarkerEnd, false);
+
+        // 범위 바 클릭 → 가장 가까운 마커 이동
+        clipRangeBar.addEventListener('click', (e) => {
+            if (!video.duration) return;
+            const rect = clipRangeBar.getBoundingClientRect();
+            const ratio = (e.clientX - rect.left) / rect.width;
+            const sec = Math.floor(ratio * video.duration);
+            const distStart = Math.abs(sec - clipStartSec);
+            const distEnd = Math.abs(sec - clipEndSec);
+            if (distStart < distEnd) { clipStartSec = sec; }
+            else { clipEndSec = sec; }
+            if (clipStartSec > clipEndSec) [clipStartSec, clipEndSec] = [clipEndSec, clipStartSec];
+            updateClipUI();
+        });
+
+        // 다운로드
         clipDownloadBtn.addEventListener('click', async () => {
             if (!currentItem) { clipStatus.textContent = '❌ 영상을 먼저 재생하세요'; return; }
-
-            const startSec = parseTimeToSeconds(clipStart.value);
-            const endSec = parseTimeToSeconds(clipEnd.value);
-
-            if (endSec <= startSec) {
+            if (clipEndSec <= clipStartSec) {
                 clipStatus.textContent = '❌ 종료 시간이 시작 시간보다 커야 합니다';
                 return;
             }
@@ -1151,8 +1229,8 @@
                     method: 'POST',
                     body: JSON.stringify({
                         url: currentItem.url,
-                        start: startSec,
-                        end: endSec,
+                        start: clipStartSec,
+                        end: clipEndSec,
                         title: currentItem.title || 'clip',
                     }),
                 });
@@ -1163,7 +1241,6 @@
                     return;
                 }
 
-                // 폴링으로 상태 확인
                 const clipId = result.id;
                 const pollInterval = setInterval(async () => {
                     try {
@@ -1184,7 +1261,7 @@
                                 break;
                             case 'error':
                                 clearInterval(pollInterval);
-                                clipStatus.textContent = `❌ ${st.error || '오류'}`;
+                                clipStatus.textContent = `❌ ${(st.error || '오류').substring(0, 60)}`;
                                 clipDownloadBtn.disabled = false;
                                 break;
                         }
@@ -1199,8 +1276,8 @@
 
     function parseTimeToSeconds(timeStr) {
         const parts = timeStr.split(':').map(Number);
-        if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-        if (parts.length === 2) return parts[0] * 60 + parts[1];
+        if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + (parts[2] || 0);
+        if (parts.length === 2) return parts[0] * 60 + (parts[1] || 0);
         return parts[0] || 0;
     }
 

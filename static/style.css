@@ -1945,48 +1945,76 @@ body.drag-over::after {
     cursor: not-allowed;
 }
 
-/* 구간 다운로드 패널 */
+/* 구간 다운로드 패널 (Bandicut-style) */
 .clip-panel {
     background: var(--bg-secondary);
     border-top: 1px solid var(--border);
-    padding: 6px 20px;
+    padding: 8px 20px;
 }
 
 .clip-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     flex-wrap: wrap;
 }
 
 .clip-label {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent);
     flex-shrink: 0;
 }
 
 .clip-inputs {
     display: flex;
     align-items: center;
+    gap: 6px;
+}
+
+.clip-point {
+    display: flex;
+    align-items: center;
     gap: 4px;
 }
 
+.clip-point-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
 .clip-time {
-    width: 60px;
-    padding: 3px 6px;
+    width: 72px;
+    padding: 4px 6px;
     border: 1px solid var(--border);
     border-radius: 4px;
     background: var(--bg-tertiary);
     color: var(--text-primary);
-    font-size: 12px;
+    font-size: 13px;
     text-align: center;
-    font-family: monospace;
+    font-family: 'Consolas', monospace;
+    letter-spacing: 0.5px;
+}
+
+.clip-time:focus {
+    border-color: var(--accent);
+    outline: none;
 }
 
 .clip-sep {
     color: var(--text-muted);
-    font-size: 13px;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.clip-duration {
+    font-size: 11px;
+    color: var(--warning);
+    font-weight: 600;
+    padding: 2px 6px;
+    background: rgba(255, 193, 7, 0.1);
+    border-radius: 3px;
 }
 
 .clip-set-btn {
@@ -1994,10 +2022,11 @@ body.drag-over::after {
     border: 1px solid var(--border);
     color: var(--text-secondary);
     font-size: 10px;
-    padding: 3px 6px;
+    padding: 3px 8px;
     border-radius: 4px;
     cursor: pointer;
     transition: all 0.15s;
+    white-space: nowrap;
 }
 
 .clip-set-btn:hover {
@@ -2009,9 +2038,9 @@ body.drag-over::after {
     background: var(--accent);
     border: none;
     color: #fff;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
-    padding: 4px 10px;
+    padding: 5px 14px;
     border-radius: 4px;
     cursor: pointer;
     transition: all 0.15s;
@@ -2029,6 +2058,10 @@ body.drag-over::after {
 .clip-status {
     font-size: 11px;
     color: var(--text-secondary);
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .clip-close-btn {
@@ -2036,10 +2069,53 @@ body.drag-over::after {
     border: none;
     color: var(--text-muted);
     cursor: pointer;
-    font-size: 13px;
+    font-size: 14px;
     margin-left: auto;
 }
 
 .clip-close-btn:hover {
     color: var(--text-primary);
+}
+
+/* 구간 범위 바 (Bandicut-style 드래그 마커) */
+.clip-range-bar {
+    position: relative;
+    height: 20px;
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+    margin-top: 6px;
+    cursor: default;
+}
+
+.clip-range-fill {
+    position: absolute;
+    height: 100%;
+    background: rgba(74, 158, 255, 0.25);
+    border-radius: 4px;
+    top: 0;
+}
+
+.clip-marker {
+    position: absolute;
+    top: -2px;
+    width: 8px;
+    height: 24px;
+    border-radius: 2px;
+    cursor: ew-resize;
+    z-index: 2;
+    transition: box-shadow 0.15s;
+}
+
+.clip-marker:hover {
+    box-shadow: 0 0 8px rgba(74, 158, 255, 0.6);
+}
+
+.clip-marker-start {
+    background: var(--success);
+    left: 0;
+}
+
+.clip-marker-end {
+    background: var(--danger);
+    right: 0;
 }
