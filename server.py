@@ -2623,6 +2623,7 @@ def _do_clip_download(uid, url, start_time, end_time, title):
         # ffmpeg 명령: 로컬 프록시에서 HLS 스트림을 받아 구간 추출
         cmd = [
             ffmpeg, "-y",
+            "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
             "-allowed_extensions", "ALL",
             "-ss", str(start_time),
             "-i", proxy_url,
@@ -2632,6 +2633,8 @@ def _do_clip_download(uid, url, start_time, end_time, title):
             "-movflags", "+faststart",
             str(out_file)
         ]
+        # 디버그: 실제 실행 명령 출력
+        print(f"[구간 다운로드] CMD: {' '.join(cmd[:8])}... -> {out_file.name}")
 
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
