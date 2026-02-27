@@ -2629,7 +2629,7 @@ def _do_clip_download(uid, url, start_time, end_time, title):
                 "noplaylist": True,
                 "outtmpl": out_template,
                 "download_ranges": yt_dlp.utils.download_range_func(None, [(start_time, end_time)]),
-                "force_keyframes_at_cuts": True,
+
                 "concurrent_fragment_downloads": 4,
                 "retries": 10,
                 "fragment_retries": 10,
@@ -2644,18 +2644,14 @@ def _do_clip_download(uid, url, start_time, end_time, title):
             opts["skip_download"] = False
             opts["outtmpl"] = out_template
             opts["download_ranges"] = yt_dlp.utils.download_range_func(None, [(start_time, end_time)])
-            opts["force_keyframes_at_cuts"] = True
+
             opts["concurrent_fragment_downloads"] = 4
             opts["retries"] = 10
             opts["fragment_retries"] = 10
             opts["noprogress"] = True
             print(f"[구간 다운로드] 원본 URL 사용 (yt-dlp 추출): {download_url[:80]}...")
 
-        # ffmpeg 경로 설정 (yt-dlp 내부에서 사용)
-        ffmpeg = _find_ffmpeg()
-        if ffmpeg:
-            opts["ffmpeg_location"] = os.path.dirname(ffmpeg)
-            print(f"[구간 다운로드] ffmpeg: {ffmpeg}")
+        # ffmpeg 경로는 yt-dlp가 자동 감지하도록 둠
 
         out_filepath = None
         def progress_hook(d):
