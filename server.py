@@ -2652,24 +2652,47 @@ def _do_clip_download(uid, url, start_time, end_time, title):
 
         print(f"[구간 다운로드] 세그먼트 {len(segments)}개 ({segments[0]['start']:.0f}s ~ {segments[-1]['start'] + segments[-1]['duration']:.0f}s)")
 
-        # 3) 세그먼트 다운로드 → 임시 .ts 파일에 이어쓰기
+        # 3) 세그먼트 병렬 다운로드 → 임시 .ts 파일에 순서대로 쓰기
         _clip_status[uid]["status"] = "downloading"
+        _clip_status[uid]["detail"] = f"0/{len(segments)} 세그먼트"
         tmp_ts = tempfile.NamedTemporaryFile(suffix='.ts', delete=False, dir=str(out_dir))
         tmp_ts_path = tmp_ts.name
         try:
-            downloaded = 0
-            for i, seg in enumerate(segments):
-                try:
-                    resp = requests.get(seg["url"], timeout=30)
-                    resp.raise_for_status()
-                    tmp_ts.write(resp.content)
-                    downloaded += len(resp.content)
-                except Exception as e:
-                    print(f"[구간 다운로드] 세그먼트 {i} 실패: {e}")
-                _clip_status[uid]["progress"] = round((i + 1) / len(segments) * 80)
+            from concurrent.futures import ThreadPoolExecutor, as_completed
 
+            # 세그먼트를 4개씩 병렬로 다운로드
+            seg_data = [None] * len(segments)
+            completed_count = 0
+            downloaded_bytes = 0
+
+            def download_segment(idx_seg):
+                idx, seg = idx_seg
+                resp = requests.get(seg["url"], timeout=30)
+                resp.raise_for_status()
+                return idx, resp.content
+
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                futures = {pool.submit(download_segment, (i, seg)): i for i, seg in enumerate(segments)}
+                for future in as_completed(futures):
+                    try:
+                        idx, data = future.result()
+                        seg_data[idx] = data
+                        completed_count += 1
+                        downloaded_bytes += len(data)
+                        dl_mb = downloaded_bytes / 1024 / 1024
+                        pct = round(completed_count / len(segments) * 80)
+                        _clip_status[uid]["progress"] = pct
+                        _clip_status[uid]["detail"] = f"{completed_count}/{len(segments)} 세그먼트 ({dl_mb:.1f}MB)"
+                    except Exception as e:
+                        completed_count += 1
+                        print(f"[구간 다운로드] 세그먼트 실패: {e}")
+
+            # 순서대로 파일에 쓰기
+            for data in seg_data:
+                if data:
+                    tmp_ts.write(data)
             tmp_ts.close()
-            print(f"[구간 다운로드] 세그먼트 다운로드 완료: {downloaded // 1024}KB")
+            print(f"[구간 다운로드] 세그먼트 다운로드 완료: {downloaded_bytes // 1024}KB")
 
             # 4) ffmpeg로 정확한 구간 트리밍 + MP4 리먹스 (로컬 파일 처리)
             # 세그먼트 시작 기준으로 오프셋 계산

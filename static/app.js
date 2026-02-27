@@ -1107,6 +1107,21 @@
         video.playbackRate = parseFloat(speedSelect.value);
     });
 
+    // ── 마우스 휠 볼륨 조절 ──
+    video.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const delta = e.deltaY < 0 ? 0.05 : -0.05;
+        video.volume = Math.max(0, Math.min(1, video.volume + delta));
+        video.muted = false;
+        volumeSlider.value = video.volume;
+        btnMute.textContent = video.volume === 0 ? '🔇' : '🔊';
+        clearTimeout(volumeSlider._saveTimeout);
+        volumeSlider._saveTimeout = setTimeout(() => {
+            settings.defaultVolume = video.volume;
+            api('/api/settings', { method: 'PUT', body: JSON.stringify(settings) }).catch(() => { });
+        }, 500);
+    }, { passive: false });
+
     btnFullscreen.addEventListener('click', toggleFullscreen);
 
     // ── 구간 다운로드 (Bandicut-style) ──
@@ -1248,10 +1263,12 @@
                         switch (st.status) {
                             case 'preparing':
                             case 'extracting':
-                                clipStatus.textContent = '⏳ 스트림 추출 중...';
+                                clipStatus.textContent = '⏳ 스트림 분석 중...';
                                 break;
                             case 'downloading':
-                                clipStatus.textContent = '⬇️ 다운로드 중...';
+                                const detail = st.detail || '';
+                                const pct = st.progress || 0;
+                                clipStatus.textContent = `⬇️ ${detail} (${pct}%)`;
                                 break;
                             case 'done':
                                 clearInterval(pollInterval);
