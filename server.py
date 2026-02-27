@@ -2587,8 +2587,10 @@ def clip_status(uid):
 
 
 def _do_clip_download(uid, url, start_time, end_time, title):
-    """로컬 프록시를 통해 ffmpeg로 구간 다운로드"""
+    """HLS 세그먼트를 직접 다운로드 후 ffmpeg로 MP4 변환"""
     try:
+        import tempfile
+
         # 다운로드 폴더 설정
         settings = _load_settings()
         dl_folder = settings.get("downloadFolder", "").strip()
@@ -2598,76 +2600,131 @@ def _do_clip_download(uid, url, start_time, end_time, title):
             out_dir = DOWNLOADS_DIR
         out_dir.mkdir(exist_ok=True)
 
-        # 파일명 설정
         safe_title = _sanitize_filename(title)
         start_str = _format_ffmpeg_time(start_time)
         end_str = _format_ffmpeg_time(end_time)
         out_file = out_dir / f"{safe_title}_clip_{start_str.replace(':','')}_{end_str.replace(':','')}.mp4"
 
-        # ffmpeg 찾기
         ffmpeg = _find_ffmpeg()
         if not ffmpeg:
             _clip_status[uid] = {"status": "error", "progress": 0,
                                  "error": "ffmpeg를 찾을 수 없습니다", "filename": None}
             return
 
-        # 로컬 프록시 URL 사용 (재생과 동일한 경로 → 인증/헤더 자동 처리)
+        # 1) 로컬 프록시에서 M3U8 가져오기
+        _clip_status[uid]["status"] = "extracting"
+        print(f"[구간 다운로드] M3U8 가져오는 중...")
         encoded_url = urllib.parse.quote(url, safe='')
-        proxy_url = f"http://127.0.0.1:5000/api/stream?url={encoded_url}"
+        m3u8_resp = requests.get(f"http://127.0.0.1:5000/api/stream?url={encoded_url}", timeout=30)
+        m3u8_resp.raise_for_status()
+        m3u8_text = m3u8_resp.text
 
+        # 2) M3U8 파싱: 세그먼트 URL + 누적 시간 계산
+        segments = []
+        cumulative_time = 0.0
+        current_duration = 0.0
+        for line in m3u8_text.split('\n'):
+            line = line.strip()
+            if line.startswith('#EXTINF:'):
+                try:
+                    current_duration = float(line.split(':')[1].split(',')[0])
+                except (ValueError, IndexError):
+                    current_duration = 5.0
+            elif line and not line.startswith('#'):
+                seg_start = cumulative_time
+                seg_end = cumulative_time + current_duration
+                # 구간과 겹치는 세그먼트만 수집
+                if seg_end > start_time and seg_start < end_time:
+                    # 상대 URL → 절대 URL
+                    if line.startswith('/'):
+                        seg_url = f"http://127.0.0.1:5000{line}"
+                    elif not line.startswith('http'):
+                        seg_url = f"http://127.0.0.1:5000/{line}"
+                    else:
+                        seg_url = line
+                    segments.append({"url": seg_url, "start": seg_start, "duration": current_duration})
+                cumulative_time = seg_end
+
+        if not segments:
+            _clip_status[uid] = {"status": "error", "progress": 0,
+                                 "error": "해당 구간의 세그먼트를 찾을 수 없습니다", "filename": None}
+            return
+
+        print(f"[구간 다운로드] 세그먼트 {len(segments)}개 ({segments[0]['start']:.0f}s ~ {segments[-1]['start'] + segments[-1]['duration']:.0f}s)")
+
+        # 3) 세그먼트 다운로드 → 임시 .ts 파일에 이어쓰기
         _clip_status[uid]["status"] = "downloading"
-        duration = end_time - start_time
-        print(f"[구간 다운로드] 시작: {safe_title} ({start_str} ~ {end_str})")
-        print(f"[구간 다운로드] 프록시 URL 사용 (localhost)")
-        print(f"[구간 다운로드] ffmpeg: {ffmpeg}")
+        tmp_ts = tempfile.NamedTemporaryFile(suffix='.ts', delete=False, dir=str(out_dir))
+        tmp_ts_path = tmp_ts.name
+        try:
+            downloaded = 0
+            for i, seg in enumerate(segments):
+                try:
+                    resp = requests.get(seg["url"], timeout=30)
+                    resp.raise_for_status()
+                    tmp_ts.write(resp.content)
+                    downloaded += len(resp.content)
+                except Exception as e:
+                    print(f"[구간 다운로드] 세그먼트 {i} 실패: {e}")
+                _clip_status[uid]["progress"] = round((i + 1) / len(segments) * 80)
 
-        # ffmpeg 명령: 로컬 프록시에서 HLS 스트림을 받아 구간 추출
-        cmd = [
-            ffmpeg, "-y",
-            "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
-            "-allowed_extensions", "ALL",
-            "-ss", str(start_time),
-            "-i", proxy_url,
-            "-t", str(duration),
-            "-c", "copy",
-            "-avoid_negative_ts", "make_zero",
-            "-movflags", "+faststart",
-            str(out_file)
-        ]
-        # 디버그: 실제 실행 명령 출력
-        print(f"[구간 다운로드] CMD: {' '.join(cmd[:8])}... -> {out_file.name}")
+            tmp_ts.close()
+            print(f"[구간 다운로드] 세그먼트 다운로드 완료: {downloaded // 1024}KB")
 
-        proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
-        )
-        _, stderr_data = proc.communicate(timeout=600)
+            # 4) ffmpeg로 정확한 구간 트리밍 + MP4 리먹스 (로컬 파일 처리)
+            # 세그먼트 시작 기준으로 오프셋 계산
+            seg_base_time = segments[0]["start"]
+            trim_start = start_time - seg_base_time
+            trim_duration = end_time - start_time
 
-        stderr_text = stderr_data.decode('utf-8', errors='replace') if stderr_data else ""
-        print(f"[구간 다운로드] ffmpeg 종료코드: {proc.returncode}")
-        if stderr_text:
-            for line in stderr_text.strip().split('\n')[-5:]:
-                print(f"  [ffmpeg] {line.strip()}")
+            cmd = [
+                ffmpeg, "-y",
+                "-i", tmp_ts_path,
+                "-ss", str(max(0, trim_start)),
+                "-t", str(trim_duration),
+                "-c", "copy",
+                "-avoid_negative_ts", "make_zero",
+                "-movflags", "+faststart",
+                str(out_file)
+            ]
 
-        if proc.returncode == 0 and out_file.exists() and out_file.stat().st_size > 1000:
-            file_size = out_file.stat().st_size
-            _clip_status[uid] = {
-                "status": "done", "progress": 100,
-                "error": None, "filename": str(out_file),
-                "size": file_size
-            }
-            print(f"[구간 다운로드] ✅ 완료: {out_file.name} ({file_size // 1024}KB)")
-        else:
-            err_lines = [l for l in stderr_text.split('\n')
-                         if any(w in l.lower() for w in ['error', 'fail', 'denied', 'invalid'])]
-            err_msg = err_lines[-1].strip() if err_lines else f"ffmpeg 종료 코드: {proc.returncode}"
-            _clip_status[uid] = {"status": "error", "progress": 0, "error": err_msg, "filename": None}
-            print(f"[구간 다운로드] ❌ 실패: {err_msg[:200]}")
+            print(f"[구간 다운로드] ffmpeg 트리밍: offset={trim_start:.1f}s, duration={trim_duration:.1f}s")
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+            )
+            _, stderr_data = proc.communicate(timeout=120)
 
-    except subprocess.TimeoutExpired:
-        _clip_status[uid] = {"status": "error", "progress": 0, "error": "타임아웃 (10분 초과)", "filename": None}
+            stderr_text = stderr_data.decode('utf-8', errors='replace') if stderr_data else ""
+            print(f"[구간 다운로드] ffmpeg 종료코드: {proc.returncode}")
+            if stderr_text:
+                for line in stderr_text.strip().split('\n')[-3:]:
+                    print(f"  [ffmpeg] {line.strip()}")
+
+            if proc.returncode == 0 and out_file.exists() and out_file.stat().st_size > 1000:
+                file_size = out_file.stat().st_size
+                _clip_status[uid] = {
+                    "status": "done", "progress": 100,
+                    "error": None, "filename": str(out_file),
+                    "size": file_size
+                }
+                print(f"[구간 다운로드] ✅ 완료: {out_file.name} ({file_size // 1024}KB)")
+            else:
+                err_lines = [l for l in stderr_text.split('\n')
+                             if any(w in l.lower() for w in ['error', 'fail', 'invalid'])]
+                err_msg = err_lines[-1].strip() if err_lines else f"ffmpeg 종료 코드: {proc.returncode}"
+                _clip_status[uid] = {"status": "error", "progress": 0, "error": err_msg, "filename": None}
+                print(f"[구간 다운로드] ❌ 실패: {err_msg[:200]}")
+
+        finally:
+            # 임시 파일 정리
+            try:
+                os.unlink(tmp_ts_path)
+            except OSError:
+                pass
+
     except Exception as e:
-        _clip_status[uid] = {"status": "error", "progress": 0, "error": str(e), "filename": None}
+        _clip_status[uid] = {"status": "error", "progress": 0, "error": str(e)[:150], "filename": None}
         print(f"[구간 다운로드] ❌ 오류: {e}")
         import traceback
         traceback.print_exc()
