@@ -2623,6 +2623,7 @@ def _do_clip_download(uid, url, start_time, end_time, title):
         # ffmpeg 명령: 로컬 프록시에서 HLS 스트림을 받아 구간 추출
         cmd = [
             ffmpeg, "-y",
+            "-allowed_extensions", "ALL",
             "-ss", str(start_time),
             "-i", proxy_url,
             "-t", str(duration),
