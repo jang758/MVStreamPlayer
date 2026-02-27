@@ -1178,7 +1178,7 @@ def _fetch_and_cache_m3u8(video_url, headers):
             if not line.startswith('http'):
                 line = base_url + line
             # 절대 URL을 프록시 경로로 교체
-            line = '/api/ts-proxy?url=' + urllib.parse.quote(line, safe='')
+            line = '/api/ts-proxy/s.ts?url=' + urllib.parse.quote(line, safe='')
         elif line.startswith('#') and 'URI="' in line:
             # #EXT-X-KEY 등의 URI 속성도 프록시 경로로 교체
             import re as _re
@@ -1186,7 +1186,7 @@ def _fetch_and_cache_m3u8(video_url, headers):
                 uri = m.group(1)
                 if not uri.startswith('http'):
                     uri = base_url + uri
-                return 'URI="/api/ts-proxy?url=' + urllib.parse.quote(uri, safe='') + '"'
+                return 'URI="/api/ts-proxy/s.ts?url=' + urllib.parse.quote(uri, safe='') + '"'
             line = _re.sub(r'URI="([^"]+)"', _replace_uri, line)
         fixed_lines.append(line)
 
@@ -2469,6 +2469,7 @@ def stream_video():
 # API - HLS 세그먼트 프록시
 # ──────────────────────────────────────────────
 @app.route("/api/ts-proxy")
+@app.route("/api/ts-proxy/s.ts")
 def ts_proxy():
     """HLS 세그먼트(.ts)와 서브 m3u8를 프록시합니다.
     올바른 CDN 헤더(Referer 등)를 주입하여 지연 없이 전송합니다."""
