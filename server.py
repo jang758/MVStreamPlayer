@@ -2586,7 +2586,7 @@ def clip_status(uid):
 
 
 def _do_clip_download(uid, url, start_time, end_time, title):
-    """yt-dlp --download-sections로 구간 다운로드 실행"""
+    """로컬 프록시를 통해 ffmpeg로 구간 다운로드"""
     try:
         # 다운로드 폴더 설정
         settings = _load_settings()
@@ -2601,104 +2601,68 @@ def _do_clip_download(uid, url, start_time, end_time, title):
         safe_title = _sanitize_filename(title)
         start_str = _format_ffmpeg_time(start_time)
         end_str = _format_ffmpeg_time(end_time)
-        out_template = str(out_dir / f"{safe_title}_clip_{start_str.replace(':','')}_{end_str.replace(':','')}.%(ext)s")
+        out_file = out_dir / f"{safe_title}_clip_{start_str.replace(':','')}_{end_str.replace(':','')}.mp4"
 
-        _clip_status[uid]["status"] = "extracting"
-        print(f"[구간 다운로드] 시작: {safe_title} ({start_str} ~ {end_str})")
-        print(f"[구간 다운로드] URL: {url[:80]}")
+        # ffmpeg 찾기
+        ffmpeg = _find_ffmpeg()
+        if not ffmpeg:
+            _clip_status[uid] = {"status": "error", "progress": 0,
+                                 "error": "ffmpeg를 찾을 수 없습니다", "filename": None}
+            return
 
-        # 다운로드 URL 결정 (저장된 stream_url 또는 원본 URL)
-        item_id = _url_id(url)
-        data = _load_data()
-        queue_item = next((q for q in data["queue"] if q["id"] == item_id), None)
-
-        download_url = url
-        stored_stream = queue_item.get("stream_url", "") if queue_item else ""
-        stored_headers = queue_item.get("http_headers", {}) if queue_item else {}
-
-        # yt-dlp 옵션 (커스텀 도메인이면 stream_url 사용)
-        parsed = urllib.parse.urlparse(url)
-        is_custom = any(d in parsed.netloc for d in CUSTOM_DOMAINS)
-
-        if is_custom and stored_stream:
-            download_url = stored_stream
-            opts = {
-                "quiet": True,
-                "no_warnings": True,
-                "format": "best",
-                "noplaylist": True,
-                "outtmpl": out_template,
-                "download_ranges": yt_dlp.utils.download_range_func(None, [(start_time, end_time)]),
-
-                "concurrent_fragment_downloads": 4,
-                "retries": 10,
-                "fragment_retries": 10,
-                "noprogress": True,
-            }
-            if stored_headers:
-                opts["http_headers"] = stored_headers
-            print(f"[구간 다운로드] 저장된 stream_url 사용: {download_url[:80]}...")
-        else:
-            # 일반 URL → yt-dlp가 직접 추출 + 다운로드
-            opts = _ydl_opts(extract_only=False)
-            opts["skip_download"] = False
-            opts["outtmpl"] = out_template
-            opts["download_ranges"] = yt_dlp.utils.download_range_func(None, [(start_time, end_time)])
-
-            opts["concurrent_fragment_downloads"] = 4
-            opts["retries"] = 10
-            opts["fragment_retries"] = 10
-            opts["noprogress"] = True
-            print(f"[구간 다운로드] 원본 URL 사용 (yt-dlp 추출): {download_url[:80]}...")
-
-        # ffmpeg 경로는 yt-dlp가 자동 감지하도록 둠
-
-        out_filepath = None
-        def progress_hook(d):
-            nonlocal out_filepath
-            if d["status"] == "downloading":
-                total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
-                downloaded = d.get("downloaded_bytes", 0)
-                if total > 0:
-                    _clip_status[uid]["progress"] = round(downloaded / total * 100, 1)
-                _clip_status[uid]["status"] = "downloading"
-            elif d["status"] == "finished":
-                out_filepath = d.get("filename", "")
-                _clip_status[uid]["progress"] = 100
-
-        opts["progress_hooks"] = [progress_hook]
+        # 로컬 프록시 URL 사용 (재생과 동일한 경로 → 인증/헤더 자동 처리)
+        encoded_url = urllib.parse.quote(url, safe='')
+        proxy_url = f"http://127.0.0.1:5000/api/stream?url={encoded_url}"
 
         _clip_status[uid]["status"] = "downloading"
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.download([download_url])
+        duration = end_time - start_time
+        print(f"[구간 다운로드] 시작: {safe_title} ({start_str} ~ {end_str})")
+        print(f"[구간 다운로드] 프록시 URL 사용 (localhost)")
+        print(f"[구간 다운로드] ffmpeg: {ffmpeg}")
 
-        # 결과 파일 찾기
-        if not out_filepath or not os.path.isfile(out_filepath):
-            # 패턴으로 검색
-            import glob
-            pattern = out_template.replace("%(ext)s", "*")
-            found = glob.glob(pattern)
-            if found:
-                out_filepath = found[0]
+        # ffmpeg 명령: 로컬 프록시에서 HLS 스트림을 받아 구간 추출
+        cmd = [
+            ffmpeg, "-y",
+            "-ss", str(start_time),
+            "-i", proxy_url,
+            "-t", str(duration),
+            "-c", "copy",
+            "-avoid_negative_ts", "make_zero",
+            "-movflags", "+faststart",
+            str(out_file)
+        ]
 
-        if out_filepath and os.path.isfile(out_filepath) and os.path.getsize(out_filepath) > 1000:
-            file_size = os.path.getsize(out_filepath)
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+        )
+        _, stderr_data = proc.communicate(timeout=600)
+
+        stderr_text = stderr_data.decode('utf-8', errors='replace') if stderr_data else ""
+        print(f"[구간 다운로드] ffmpeg 종료코드: {proc.returncode}")
+        if stderr_text:
+            for line in stderr_text.strip().split('\n')[-5:]:
+                print(f"  [ffmpeg] {line.strip()}")
+
+        if proc.returncode == 0 and out_file.exists() and out_file.stat().st_size > 1000:
+            file_size = out_file.stat().st_size
             _clip_status[uid] = {
                 "status": "done", "progress": 100,
-                "error": None, "filename": out_filepath,
+                "error": None, "filename": str(out_file),
                 "size": file_size
             }
-            print(f"[구간 다운로드] ✅ 완료: {os.path.basename(out_filepath)} ({file_size // 1024}KB)")
+            print(f"[구간 다운로드] ✅ 완료: {out_file.name} ({file_size // 1024}KB)")
         else:
-            _clip_status[uid] = {"status": "error", "progress": 0,
-                                 "error": "다운로드 파일을 찾을 수 없습니다", "filename": None}
-            print(f"[구간 다운로드] ❌ 파일 미생성")
+            err_lines = [l for l in stderr_text.split('\n')
+                         if any(w in l.lower() for w in ['error', 'fail', 'denied', 'invalid'])]
+            err_msg = err_lines[-1].strip() if err_lines else f"ffmpeg 종료 코드: {proc.returncode}"
+            _clip_status[uid] = {"status": "error", "progress": 0, "error": err_msg, "filename": None}
+            print(f"[구간 다운로드] ❌ 실패: {err_msg[:200]}")
 
+    except subprocess.TimeoutExpired:
+        _clip_status[uid] = {"status": "error", "progress": 0, "error": "타임아웃 (10분 초과)", "filename": None}
     except Exception as e:
-        err_msg = str(e)
-        if len(err_msg) > 150:
-            err_msg = err_msg[:150] + "..."
-        _clip_status[uid] = {"status": "error", "progress": 0, "error": err_msg, "filename": None}
+        _clip_status[uid] = {"status": "error", "progress": 0, "error": str(e), "filename": None}
         print(f"[구간 다운로드] ❌ 오류: {e}")
         import traceback
         traceback.print_exc()
